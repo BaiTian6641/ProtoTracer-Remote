@@ -39,6 +39,7 @@ constexpr uint32_t kColorOutline = 0x3C4654;
 constexpr uint32_t kColorBatteryGood = 0x4ADE80;
 constexpr uint32_t kColorBatteryLow = 0xFB923C;
 constexpr uint8_t kSsd1351MasterCurrentCommand = 0xC7;
+constexpr char kColorMarker = '\x1E';
 constexpr char kSwitchMarker = '\x1F';
 
 uint8_t clamp_progress(const uint8_t percent)
@@ -219,6 +220,60 @@ bool parse_switch_text(const char *text, char *label, const size_t label_size, b
     return true;
 }
 
+int hex_digit_value(const char value)
+{
+    if (value >= '0' && value <= '9')
+    {
+        return value - '0';
+    }
+    if (value >= 'a' && value <= 'f')
+    {
+        return 10 + value - 'a';
+    }
+    if (value >= 'A' && value <= 'F')
+    {
+        return 10 + value - 'A';
+    }
+    return -1;
+}
+
+bool parse_color_swatch_text(const char *text, char *label, const size_t label_size, uint32_t *out_color)
+{
+    if (text == nullptr || label == nullptr || label_size == 0 || out_color == nullptr)
+    {
+        return false;
+    }
+
+    const char *marker = std::strchr(text, kColorMarker);
+    if (marker == nullptr)
+    {
+        return false;
+    }
+
+    const char *hex = marker + 1;
+    if (*hex == '#')
+    {
+        ++hex;
+    }
+
+    uint32_t color = 0;
+    for (int index = 0; index < 6; ++index)
+    {
+        const int digit = hex_digit_value(hex[index]);
+        if (digit < 0)
+        {
+            return false;
+        }
+        color = (color << 4) | static_cast<uint32_t>(digit);
+    }
+
+    const size_t label_length = std::min(static_cast<size_t>(marker - text), label_size - 1U);
+    std::memcpy(label, text, label_length);
+    label[label_length] = '\0';
+    *out_color = color;
+    return true;
+}
+
 bool text_has_on_token(const char *text)
 {
     return text != nullptr &&
@@ -289,6 +344,10 @@ bool battery_status_from_scene(const prototracer::Ssd1351Display::Scene &scene, 
         }
     }
 
+    if (!found && charging)
+    {
+        percent = 50;
+    }
     *out_percent = percent;
     *out_charging = charging;
     return found || charging;
@@ -761,6 +820,27 @@ void Ssd1351Display::draw_test_menu_scene_(const Scene &scene, const uint32_t ac
             continue;
         }
 
+        char swatch_label[Ssd1351Display::kTestMenuLineLength] = {};
+        uint32_t swatch_color = 0;
+        if (parse_color_swatch_text(scene.menu_lines[i], swatch_label, sizeof(swatch_label), &swatch_color))
+        {
+            constexpr int kSwatchW = 34;
+            constexpr int kSwatchH = 12;
+            const int swatch_x = kListX + kListW - kSwatchW - 9;
+            const int swatch_y = row_y + (row_h / 2) - (kSwatchH / 2);
+            draw_color_swatch_(swatch_x, swatch_y, kSwatchW, kSwatchH, swatch_color, accent_rgb888);
+
+            int text_width = swatch_x - (kListX + 11) - 6;
+            const lgfx::IFont *font = body_font_for_(swatch_label);
+            if (canvas_->textWidth(swatch_label, font) > text_width || rows >= 6)
+            {
+                font = compact_font_for_(swatch_label);
+            }
+            const int text_y = row_y + std::max(1, (row_h - line_height_for(font)) / 2);
+            draw_text_line_(kListX + 11, text_y, text_width, swatch_label, font, color, lgfx::textdatum_t::top_left);
+            continue;
+        }
+
         int row_percent = 0;
         const bool has_battery_percent = parse_battery_percent(scene.menu_lines[i], &row_percent);
         const bool row_charging = text_has_on_token(scene.menu_lines[i]) || text_has_on_token(scene.aux);
@@ -799,10 +879,13 @@ void Ssd1351Display::draw_battery_icon_(const int x,
     const int clamped = std::clamp(percent, 0, 100);
     const int body_width = std::max(8, width - 3);
     const int fill_width = ((body_width - 4) * clamped) / 100;
-    const uint32_t level_color = clamped <= 20 ? kColorBatteryLow : (charging ? accent_rgb888 : kColorBatteryGood);
+    const uint32_t outline_color = charging ? accent_rgb888 : kColorTextMuted;
+    const uint32_t cap_color = charging ? accent_rgb888 : kColorTextMuted;
+    const uint32_t level_color = clamped <= 20 && !charging ? kColorBatteryLow : (charging ? accent_rgb888 : kColorBatteryGood);
 
-    canvas_->drawRoundRect(x, y, body_width, height, 2, kColorTextMuted);
-    canvas_->fillRoundRect(x + body_width, y + (height / 3), 3, std::max(3, height / 3), 1, kColorTextMuted);
+    canvas_->fillRoundRect(x, y, body_width, height, 2, kColorBackground);
+    canvas_->drawRoundRect(x, y, body_width, height, 2, outline_color);
+    canvas_->fillRoundRect(x + body_width, y + (height / 3), 3, std::max(3, height / 3), 1, cap_color);
     if (fill_width > 0)
     {
         canvas_->fillRoundRect(x + 2, y + 2, fill_width, std::max(1, height - 4), 1, level_color);
@@ -810,10 +893,26 @@ void Ssd1351Display::draw_battery_icon_(const int x,
     if (charging)
     {
         const int bolt_x = x + (body_width / 2) - 2;
-        canvas_->drawLine(bolt_x + 2, y + 2, bolt_x, y + (height / 2), kColorTextPrimary);
-        canvas_->drawLine(bolt_x, y + (height / 2), bolt_x + 4, y + (height / 2), kColorTextPrimary);
-        canvas_->drawLine(bolt_x + 4, y + (height / 2), bolt_x + 1, y + height - 2, kColorTextPrimary);
+        canvas_->drawLine(bolt_x + 2, y + 1, bolt_x, y + (height / 2), kColorTextPrimary);
+        canvas_->drawLine(bolt_x + 1, y + 1, bolt_x - 1, y + (height / 2), kColorTextPrimary);
+        canvas_->drawLine(bolt_x, y + (height / 2), bolt_x + 5, y + (height / 2), kColorTextPrimary);
+        canvas_->drawLine(bolt_x + 4, y + (height / 2), bolt_x + 1, y + height - 1, kColorTextPrimary);
+        canvas_->drawLine(bolt_x + 5, y + (height / 2), bolt_x + 2, y + height - 1, kColorTextPrimary);
     }
+}
+
+void Ssd1351Display::draw_color_swatch_(const int x,
+                                        const int y,
+                                        const int width,
+                                        const int height,
+                                        const uint32_t color_rgb888,
+                                        const uint32_t accent_rgb888)
+{
+    const uint32_t outline = scale_rgb888(accent_rgb888, 130);
+    canvas_->fillRoundRect(x, y, width, height, 3, kColorBackground);
+    canvas_->drawRoundRect(x, y, width, height, 3, outline);
+    canvas_->fillRoundRect(x + 2, y + 2, width - 4, height - 4, 2, color_rgb888 & 0xFFFFFFU);
+    canvas_->drawLine(x + 3, y + 3, x + width - 4, y + 3, scale_rgb888(kColorTextPrimary, 80));
 }
 
 void Ssd1351Display::draw_signal_icon_(const int x,

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace prototracer
 {
@@ -75,6 +76,7 @@ struct VisualConfig
 {
     std::string animation_asset;
     uint8_t expression_count = 17;
+    std::vector<std::string> expression_names;
     uint8_t red = 25;
     uint8_t green = 125;
     uint8_t blue = 235;

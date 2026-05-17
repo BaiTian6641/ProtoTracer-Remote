@@ -32,6 +32,7 @@ constexpr float kShakeDeltaThresholdMg = 560.0f;
 constexpr float kShakeVerticalDominance = 1.35f;
 constexpr uint16_t kProximitySurpriseThreshold = 1200;
 constexpr uint16_t kProximitySurpriseMargin = 120;
+constexpr char kColorMarker = '\x1E';
 constexpr char kSwitchMarker = '\x1F';
 constexpr uint8_t kRemoteBrightnessStep = 16;
 constexpr uint16_t kRemoteHueStepDegrees = 12;
@@ -72,6 +73,46 @@ enum class GestureUiAction : uint8_t
 const char *localized(const prototracer::UiLanguage language, const char *english, const char *chinese)
 {
     return language == prototracer::UiLanguage::Chinese ? chinese : english;
+}
+
+const char *default_expression_name(const uint8_t index)
+{
+    static constexpr const char *kNames[] = {
+        "Default",
+        "Angry",
+        "Doubt",
+        "Frown",
+        "Heart",
+        "Sad",
+        "Surprise",
+        "Happy",
+        "OwO",
+        "Surprise",
+        "Sleepy",
+        "Curious",
+        "Excited",
+        "Wink",
+        "Shy",
+        "Focus",
+        "Custom",
+    };
+
+    if (index < (sizeof(kNames) / sizeof(kNames[0])))
+    {
+        return kNames[index];
+    }
+    return nullptr;
+}
+
+const char *expression_name_for(const prototracer::VisualConfig &visual, const uint8_t index)
+{
+    if (index < visual.expression_names.size() && !visual.expression_names[index].empty())
+    {
+        return visual.expression_names[index].c_str();
+    }
+
+    const char *fallback = default_expression_name(index);
+    return fallback != nullptr ? fallback : "Expression";
 }
 
 uint32_t now_ms()
@@ -249,13 +290,13 @@ uint32_t hue_shift_rgb888(const prototracer::VisualConfig &visual, const uint16_
     return rgb888(out_red, out_green, out_blue);
 }
 
-void format_rgb_hex_line(char *buffer, const size_t buffer_size, const char *label, const uint32_t rgb)
+void format_color_swatch_line(char *buffer, const size_t buffer_size, const char *label, const uint32_t rgb)
 {
     if (buffer == nullptr || buffer_size == 0)
     {
         return;
     }
-    std::snprintf(buffer, buffer_size, "%s #%02X%02X%02X", label, static_cast<unsigned>((rgb >> 16) & 0xFFU), static_cast<unsigned>((rgb >> 8) & 0xFFU), static_cast<unsigned>(rgb & 0xFFU));
+    std::snprintf(buffer, buffer_size, "%s%c%06X", label, kColorMarker, static_cast<unsigned>(rgb & 0xFFFFFFU));
 }
 
 const char *battery_label(const prototracer::BatteryChemistry chemistry, const prototracer::UiLanguage language)
@@ -345,6 +386,10 @@ void preserve_dynamic_seed_values(prototracer::ResolvedConfig *candidate, const 
     if (candidate->controller.pairing.bound_peer_id.empty())
     {
         candidate->controller.pairing.bound_peer_id = current.controller.pairing.bound_peer_id;
+    }
+    if (candidate->controller.visual.expression_names.empty())
+    {
+        candidate->controller.visual.expression_names = current.controller.visual.expression_names;
     }
     candidate->controller.display = current.controller.display;
     candidate->controller.features.enable_shake_random = current.controller.features.enable_shake_random;
@@ -1776,7 +1821,7 @@ esp_err_t ControllerApp::update_runtime_display_(const bool force)
 
     if (!detail_view_active_)
     {
-        std::snprintf(lines[0], sizeof(lines[0]), "Expr %u / %u", static_cast<unsigned>(expression_index_ + 1), static_cast<unsigned>(expression_count_));
+        std::snprintf(lines[0], sizeof(lines[0]), "Expr %u %s", static_cast<unsigned>(expression_index_ + 1), expression_name_for(active_config_.controller.visual, expression_index_));
         std::snprintf(lines[1], sizeof(lines[1]), "Bright %u", static_cast<unsigned>(brightness_level_));
         std::snprintf(lines[2], sizeof(lines[2]), "Hue %u deg", static_cast<unsigned>(hue_shift_degrees_));
         std::snprintf(lines[3], sizeof(lines[3]), "Settings V%s S%s", voice_enabled_ ? "1" : "0", shake_random_enabled_ ? "1" : "0");
@@ -1799,13 +1844,14 @@ esp_err_t ControllerApp::update_runtime_display_(const bool force)
     switch (page)
     {
     case RuntimePage::Expression:
-        std::snprintf(lines[0], sizeof(lines[0]), "Face %u / %u", static_cast<unsigned>(expression_index_ + 1), static_cast<unsigned>(expression_count_));
+        std::snprintf(lines[0], sizeof(lines[0]), "%s", expression_name_for(active_config_.controller.visual, expression_index_));
         build_slider_bar(slider, sizeof(slider), expression_index_, 0, std::max<int>(1, expression_count_) - 1);
         std::snprintf(lines[1], sizeof(lines[1]), "%s", slider);
-        std::snprintf(lines[2], sizeof(lines[2]), "%s", localized(language, "Stick adjust", "摇杆调整"));
-        std::snprintf(lines[3], sizeof(lines[3]), "%s", localized(language, "B1/B0 apply B2 back", "B1/B0应用 B2返"));
+        std::snprintf(lines[2], sizeof(lines[2]), "Face %u / %u", static_cast<unsigned>(expression_index_ + 1), static_cast<unsigned>(expression_count_));
+        std::snprintf(lines[3], sizeof(lines[3]), "%s", localized(language, "Stick adjust", "摇杆调整"));
+        std::snprintf(lines[4], sizeof(lines[4]), "%s", localized(language, "B1/B0 apply B2 back", "B1/B0应用 B2返"));
         selected_index = DisplayService::kTestMenuNoCursor;
-        line_count = 4;
+        line_count = 5;
         break;
     case RuntimePage::Brightness:
         std::snprintf(lines[0], sizeof(lines[0]), "Bright %u / 255", static_cast<unsigned>(brightness_level_));
@@ -1823,8 +1869,8 @@ esp_err_t ControllerApp::update_runtime_display_(const bool force)
         std::snprintf(lines[0], sizeof(lines[0]), "Hue %u deg", static_cast<unsigned>(hue_shift_degrees_));
         build_slider_bar(slider, sizeof(slider), hue_shift_degrees_, 0, 360);
         std::snprintf(lines[1], sizeof(lines[1]), "%s", slider);
-        format_rgb_hex_line(lines[2], sizeof(lines[2]), "Base", base_color);
-        format_rgb_hex_line(lines[3], sizeof(lines[3]), "Now", shifted_color);
+        format_color_swatch_line(lines[2], sizeof(lines[2]), "Base", base_color);
+        format_color_swatch_line(lines[3], sizeof(lines[3]), "Now", shifted_color);
         std::snprintf(lines[4], sizeof(lines[4]), "%s", localized(language, "Stick adjust", "摇杆调整"));
         std::snprintf(lines[5], sizeof(lines[5]), "%s", localized(language, "B1 apply B2", "B1应用 B2返"));
         selected_index = DisplayService::kTestMenuNoCursor;

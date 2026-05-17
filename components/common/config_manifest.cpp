@@ -106,6 +106,49 @@ uint16_t json_uint16(cJSON *object, const char *key, const uint16_t fallback, co
     }
     return static_cast<uint16_t>(value);
 }
+
+void parse_expression_names(cJSON *visual, prototracer::VisualConfig *out)
+{
+    if (visual == nullptr || out == nullptr)
+    {
+        return;
+    }
+
+    cJSON *names = cJSON_GetObjectItemCaseSensitive(visual, "expression_names");
+    if (!cJSON_IsArray(names))
+    {
+        names = cJSON_GetObjectItemCaseSensitive(visual, "expressions");
+    }
+    if (!cJSON_IsArray(names))
+    {
+        return;
+    }
+
+    out->expression_names.clear();
+    int index = 0;
+    cJSON *item = nullptr;
+    cJSON_ArrayForEach(item, names)
+    {
+        if (index >= 64)
+        {
+            break;
+        }
+
+        if (cJSON_IsString(item) && item->valuestring != nullptr)
+        {
+            out->expression_names.emplace_back(item->valuestring);
+        }
+        else if (cJSON_IsObject(item))
+        {
+            out->expression_names.emplace_back(json_string(item, "name", ""));
+        }
+        else
+        {
+            out->expression_names.emplace_back();
+        }
+        ++index;
+    }
+}
 } // namespace
 
 namespace prototracer
@@ -222,6 +265,7 @@ esp_err_t parse_manifest_json(const char *json, const ConfigSourceKind source, R
     {
         out->controller.visual.animation_asset = json_string(visual, "animation_asset", out->controller.visual.animation_asset.c_str());
         out->controller.visual.expression_count = json_uint8(visual, "expression_count", out->controller.visual.expression_count, 1, 64);
+        parse_expression_names(visual, &out->controller.visual);
         out->controller.visual.red = json_color(visual, "red", out->controller.visual.red);
         out->controller.visual.green = json_color(visual, "green", out->controller.visual.green);
         out->controller.visual.blue = json_color(visual, "blue", out->controller.visual.blue);

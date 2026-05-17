@@ -87,6 +87,7 @@ private:
     void draw_update_scene_(const Scene &scene, uint32_t accent_rgb888);
     void draw_test_menu_scene_(const Scene &scene, uint32_t accent_rgb888);
     void draw_battery_icon_(int x, int y, int width, int height, int percent, bool charging, uint32_t accent_rgb888);
+    void draw_color_swatch_(int x, int y, int width, int height, uint32_t color_rgb888, uint32_t accent_rgb888);
     void draw_signal_icon_(int x, int y, int percent, bool visible, uint32_t accent_rgb888);
     void draw_material_switch_(int x, int y, int width, int height, bool enabled, uint32_t accent_rgb888);
     void draw_material_slider_(int x, int y, int width, int height, int filled_segments, int total_segments, uint32_t accent_rgb888);
