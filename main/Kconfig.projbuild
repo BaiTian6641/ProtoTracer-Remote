@@ -1,0 +1,28 @@
+menu "ProtoTracer Remote"
+
+config PROTOTRACER_HTTP_PORT
+    int "Local HTTP service port"
+    range 1 65535
+    default 80
+
+config PROTOTRACER_MAINBOARD_SERVICE_UUID
+    string "Main board discovery service UUID"
+    default "73cf57c7-6797-46e8-8202-dc5e7f956b57"
+
+config PROTOTRACER_MAINBOARD_RX_CHARACTERISTIC_UUID
+    string "Main board RX characteristic UUID"
+    default "8fc048fe-591c-4fb8-a99c-e9f507940964"
+
+config PROTOTRACER_MAINBOARD_TX_CHARACTERISTIC_UUID
+    string "Main board TX characteristic UUID"
+    default "42036097-7c76-4129-a80d-ed4e0d12359c"
+
+config PROTOTRACER_PROVISIONING_AP_PASSWORD
+    string "Provisioning SoftAP password"
+    default ""
+
+config PROTOTRACER_REPO_NAMESPACE
+    string "NVS namespace for repo secrets"
+    default "secrets"
+
+endmenu

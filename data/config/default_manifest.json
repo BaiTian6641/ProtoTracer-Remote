@@ -1,0 +1,51 @@
+{
+  "device": {
+    "display_name": "ProtoTracer Remote",
+    "hardware_revision": "proto-a0",
+    "language": "en"
+  },
+  "network": {
+    "hostname_prefix": "ptr-remote",
+    "provisioning_ap_prefix": "ProtoTracer-Remote",
+    "station_ssid": "",
+    "station_password": ""
+  },
+  "repo": {
+    "manifest_url": "",
+    "asset_base_url": "",
+    "auth_token_nvs_key": "repo_access_token",
+    "auth_scheme": "bearer",
+    "accept_header": ""
+  },
+  "pairing": {
+    "transport": "ble",
+    "service_uuid": "73cf57c7-6797-46e8-8202-dc5e7f956b57",
+    "ble_rx_uuid": "8fc048fe-591c-4fb8-a99c-e9f507940964",
+    "ble_tx_uuid": "42036097-7c76-4129-a80d-ed4e0d12359c",
+    "config_endpoint": "/api/remote/config",
+    "bound_peer_id": ""
+  },
+  "visual": {
+    "animation_asset": "status/default.anim.json",
+    "red": 25,
+    "green": 125,
+    "blue": 235
+  },
+  "features": {
+    "enable_gesture": true,
+    "enable_imu": true,
+    "enable_shake_random": true,
+    "enable_ws2812": true,
+    "enable_low_power_core": true,
+    "allow_manual_fs_upload": true
+  },
+  "display": {
+    "oled_brightness": 192,
+    "oled_timeout_seconds": 30
+  },
+  "config_priority": [
+    "main_board",
+    "remote_repo",
+    "filesystem_image"
+  ]
+}

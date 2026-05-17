@@ -1,0 +1,16 @@
+Command: cmake -G Ninja -B C:\Users\weyst\Documents\ProtoTracer-Remote\firmware\build-wokwi -DPYTHON_DEPS_CHECKED=1 -DPYTHON=C:\Espressif\tools\python\v6.0\venv\Scripts\python.exe -DESP_PLATFORM=1 -DSDKCONFIG_DEFAULTS=sdkconfig.defaults;../simulation/wokwi/sdkconfig.defaults -DCCACHE_ENABLE=False C:\Users\weyst\Documents\ProtoTracer-Remote\firmware
+Configuration Report                                                           
++-----------------------------------------------------------------------------+
+|  Parser Version: 1                                                          |
+|  Verbosity: default                                                         |
+|  Defaults policy: sdkconfig                                                 |
+|  Status: Finished with notifications                                        |
+|                                                                             |
+| Disabled Symbols/Choices With User-Set Value                                |
+| +-------------------------------------------------------------------------+ |
+| | * <choice BT_HOST> (defined at                                          | |
+| | C:/esp/v6.0/esp-idf/components/bt/Kconfig:9) with all choice symbols    | |
+| | disabled in sdkconfig; the choice is not visible. Source:               | |
+| | C:\Users\weyst\AppData\Local\Temp\kconfgen_tmptfm7qfxg                  | |
+| +-------------------------------------------------------------------------+ |
++-----------------------------------------------------------------------------+

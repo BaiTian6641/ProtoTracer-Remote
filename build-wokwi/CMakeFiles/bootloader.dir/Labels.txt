@@ -1,0 +1,13 @@
+# Target labels
+ bootloader
+# Source files and their labels
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/CMakeFiles/bootloader
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/CMakeFiles/bootloader.rule
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/CMakeFiles/bootloader-complete.rule
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule

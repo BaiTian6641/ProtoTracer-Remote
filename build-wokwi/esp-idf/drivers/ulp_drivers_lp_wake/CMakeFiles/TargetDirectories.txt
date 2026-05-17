@@ -1,0 +1,5 @@
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake/CMakeFiles/ulp_drivers_lp_wake.dir
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake/CMakeFiles/ld_script.dir
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake/CMakeFiles/build.dir
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake/CMakeFiles/edit_cache.dir
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake/CMakeFiles/rebuild_cache.dir

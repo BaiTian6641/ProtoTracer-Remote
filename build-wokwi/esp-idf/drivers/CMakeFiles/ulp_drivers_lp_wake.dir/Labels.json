@@ -1,0 +1,43 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/CMakeFiles/ulp_drivers_lp_wake"
+		},
+		{
+			"file" : "C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/CMakeFiles/ulp_drivers_lp_wake.rule"
+		},
+		{
+			"file" : "C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/CMakeFiles/ulp_drivers_lp_wake-complete.rule"
+		},
+		{
+			"file" : "C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake-prefix/src/ulp_drivers_lp_wake-stamp/ulp_drivers_lp_wake-build.rule"
+		},
+		{
+			"file" : "C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake-prefix/src/ulp_drivers_lp_wake-stamp/ulp_drivers_lp_wake-configure.rule"
+		},
+		{
+			"file" : "C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake-prefix/src/ulp_drivers_lp_wake-stamp/ulp_drivers_lp_wake-download.rule"
+		},
+		{
+			"file" : "C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake-prefix/src/ulp_drivers_lp_wake-stamp/ulp_drivers_lp_wake-install.rule"
+		},
+		{
+			"file" : "C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake-prefix/src/ulp_drivers_lp_wake-stamp/ulp_drivers_lp_wake-mkdir.rule"
+		},
+		{
+			"file" : "C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake-prefix/src/ulp_drivers_lp_wake-stamp/ulp_drivers_lp_wake-patch.rule"
+		},
+		{
+			"file" : "C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake-prefix/src/ulp_drivers_lp_wake-stamp/ulp_drivers_lp_wake-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"ulp_drivers_lp_wake"
+		],
+		"name" : "ulp_drivers_lp_wake"
+	}
+}

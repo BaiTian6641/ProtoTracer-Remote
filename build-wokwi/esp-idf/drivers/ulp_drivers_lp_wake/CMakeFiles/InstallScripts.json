@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

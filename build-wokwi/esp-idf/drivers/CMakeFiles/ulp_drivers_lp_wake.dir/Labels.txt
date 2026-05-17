@@ -1,0 +1,13 @@
+# Target labels
+ ulp_drivers_lp_wake
+# Source files and their labels
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/CMakeFiles/ulp_drivers_lp_wake
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/CMakeFiles/ulp_drivers_lp_wake.rule
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/CMakeFiles/ulp_drivers_lp_wake-complete.rule
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake-prefix/src/ulp_drivers_lp_wake-stamp/ulp_drivers_lp_wake-build.rule
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake-prefix/src/ulp_drivers_lp_wake-stamp/ulp_drivers_lp_wake-configure.rule
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake-prefix/src/ulp_drivers_lp_wake-stamp/ulp_drivers_lp_wake-download.rule
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake-prefix/src/ulp_drivers_lp_wake-stamp/ulp_drivers_lp_wake-install.rule
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake-prefix/src/ulp_drivers_lp_wake-stamp/ulp_drivers_lp_wake-mkdir.rule
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake-prefix/src/ulp_drivers_lp_wake-stamp/ulp_drivers_lp_wake-patch.rule
+C:/Users/weyst/Documents/ProtoTracer-Remote/firmware/build-wokwi/esp-idf/drivers/ulp_drivers_lp_wake-prefix/src/ulp_drivers_lp_wake-stamp/ulp_drivers_lp_wake-update.rule
