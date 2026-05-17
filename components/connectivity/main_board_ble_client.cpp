@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "config_manifest.hpp"
 #include "esp_log.h"
@@ -38,6 +39,7 @@ constexpr EventBits_t kEventFailed = BIT2;
 constexpr EventBits_t kEventConfigPayload = BIT3;
 constexpr EventBits_t kEventWriteComplete = BIT4;
 constexpr EventBits_t kEventWriteFailed = BIT5;
+constexpr EventBits_t kEventScanComplete = BIT6;
 constexpr TickType_t kSyncTimeout = pdMS_TO_TICKS(5000);
 constexpr TickType_t kOperationTimeout = pdMS_TO_TICKS(12000);
 constexpr TickType_t kConfigTimeout = pdMS_TO_TICKS(2500);
@@ -53,6 +55,7 @@ struct MainBoardBleClient
     EventGroupHandle_t events = nullptr;
     bool initialized = false;
     bool operation_active = false;
+    bool candidate_scan_active = false;
     bool connecting = false;
     bool ready = false;
     bool service_found = false;
@@ -78,6 +81,7 @@ struct MainBoardBleClient
     bool last_rssi_valid = false;
     bool config_request_in_flight = false;
     std::string config_payload;
+    std::vector<BlePeerCandidate> scan_candidates;
     std::string last_error;
     int write_status = 0;
 };
@@ -198,6 +202,10 @@ uint8_t rssi_to_percent(const int8_t rssi)
 
 std::string current_bound_peer_id()
 {
+    if (s_client.peer_filter_enabled && has_peer_address(s_client.peer_addr))
+    {
+        return peer_address_string(s_client.peer_addr);
+    }
     if (!s_client.peer_name.empty())
     {
         return s_client.peer_name;
@@ -249,6 +257,7 @@ void set_failure(const char *message, const int rc = 0)
 void clear_operation_state()
 {
     s_client.operation_active = false;
+    s_client.candidate_scan_active = false;
     s_client.connecting = false;
     s_client.ready = false;
     s_client.service_found = false;
@@ -265,7 +274,7 @@ void clear_operation_state()
     s_client.config_request_in_flight = false;
     s_client.config_payload.clear();
     s_client.last_error.clear();
-    xEventGroupClearBits(s_client.events, kEventReady | kEventFailed | kEventConfigPayload | kEventWriteComplete | kEventWriteFailed);
+    xEventGroupClearBits(s_client.events, kEventReady | kEventFailed | kEventConfigPayload | kEventWriteComplete | kEventWriteFailed | kEventScanComplete);
 }
 
 void reset_config_exchange()
@@ -283,7 +292,7 @@ void disconnect_if_needed()
     }
 }
 
-bool advertisement_matches(const ble_gap_disc_desc *disc, std::string *matched_name)
+bool advertisement_has_main_board_service(const ble_gap_disc_desc *disc, std::string *matched_name)
 {
     if (disc == nullptr)
     {
@@ -323,6 +332,22 @@ bool advertisement_matches(const ble_gap_disc_desc *disc, std::string *matched_n
         return false;
     }
 
+    return true;
+}
+
+bool advertisement_matches(const ble_gap_disc_desc *disc, std::string *matched_name)
+{
+    std::string advertised_name;
+    if (!advertisement_has_main_board_service(disc, &advertised_name))
+    {
+        return false;
+    }
+
+    if (matched_name != nullptr)
+    {
+        *matched_name = advertised_name;
+    }
+
     if (s_client.peer_filter_enabled)
     {
         return std::memcmp(disc->addr.val, s_client.peer_filter, sizeof(s_client.peer_filter)) == 0;
@@ -334,6 +359,41 @@ bool advertisement_matches(const ble_gap_disc_desc *disc, std::string *matched_n
     }
 
     return true;
+}
+
+void remember_scan_candidate(const ble_gap_disc_desc *disc, const std::string &advertised_name)
+{
+    if (disc == nullptr)
+    {
+        return;
+    }
+
+    const std::string peer_id = peer_address_string(disc->addr);
+    auto existing = std::find_if(
+        s_client.scan_candidates.begin(),
+        s_client.scan_candidates.end(),
+        [&peer_id](const BlePeerCandidate &candidate) { return candidate.peer_id == peer_id; });
+
+    if (existing == s_client.scan_candidates.end())
+    {
+        BlePeerCandidate candidate = {};
+        candidate.display_name = advertised_name.empty() ? peer_id : advertised_name;
+        candidate.peer_id = peer_id;
+        candidate.rssi = disc->rssi;
+        candidate.signal_percent = rssi_to_percent(disc->rssi);
+        s_client.scan_candidates.push_back(candidate);
+        return;
+    }
+
+    if (disc->rssi > existing->rssi)
+    {
+        existing->rssi = disc->rssi;
+        existing->signal_percent = rssi_to_percent(disc->rssi);
+    }
+    if (existing->display_name == existing->peer_id && !advertised_name.empty())
+    {
+        existing->display_name = advertised_name;
+    }
 }
 
 std::string extract_json_payload(const std::string &source)
@@ -708,6 +768,16 @@ int gap_event(struct ble_gap_event *event, void *arg)
     switch (event->type)
     {
     case BLE_GAP_EVENT_DISC:
+        if (s_client.candidate_scan_active)
+        {
+            std::string advertised_name;
+            if (advertisement_has_main_board_service(&event->disc, &advertised_name))
+            {
+                remember_scan_candidate(&event->disc, advertised_name);
+            }
+            return 0;
+        }
+
         if (s_client.operation_active)
         {
             std::string advertised_name;
@@ -744,6 +814,12 @@ int gap_event(struct ble_gap_event *event, void *arg)
         return 0;
 
     case BLE_GAP_EVENT_DISC_COMPLETE:
+        if (s_client.candidate_scan_active)
+        {
+            xEventGroupSetBits(s_client.events, kEventScanComplete);
+            return 0;
+        }
+
         if (s_client.operation_active && !s_client.connecting && s_client.conn_handle == BLE_HS_CONN_HANDLE_NONE)
         {
             set_failure("Main-board BLE scan completed without a match", event->disc_complete.reason);
@@ -856,7 +932,7 @@ void on_sync()
     ESP_LOGI(TAG, "NimBLE host synchronized");
 }
 
-esp_err_t start_scan()
+esp_err_t start_scan(const int duration_ms = kScanDurationMs)
 {
     struct ble_gap_disc_params params = {};
     params.passive = 1;
@@ -866,7 +942,7 @@ esp_err_t start_scan()
     params.filter_policy = 0;
     params.limited = 0;
 
-    const int rc = ble_gap_disc(s_client.own_addr_type, kScanDurationMs, &params, gap_event, nullptr);
+    const int rc = ble_gap_disc(s_client.own_addr_type, duration_ms, &params, gap_event, nullptr);
     if (rc != 0)
     {
         ESP_LOGW(TAG, "Failed to start BLE scan (rc=%d)", rc);
@@ -916,6 +992,80 @@ esp_err_t init_main_board_ble_client()
     }
 
     return ESP_OK;
+#endif
+}
+
+esp_err_t scan_main_board_ble_candidates(const ControllerConfig &seed, BlePeerCandidate *out_candidates, const size_t max_candidates, size_t *out_count)
+{
+#if !CONFIG_BT_NIMBLE_ENABLED
+    (void)seed;
+    (void)out_candidates;
+    (void)max_candidates;
+    if (out_count != nullptr)
+    {
+        *out_count = 0;
+    }
+    return ESP_ERR_NOT_SUPPORTED;
+#else
+    if (out_count == nullptr || (max_candidates > 0 && out_candidates == nullptr))
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *out_count = 0;
+
+    if (!s_client.initialized)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (!parse_uuid128(seed.pairing.service_uuid, &s_client.service_uuid))
+    {
+        ESP_LOGW(TAG, "Main-board BLE service UUID configuration is invalid");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    (void)ble_gap_disc_cancel();
+    disconnect_if_needed();
+    clear_operation_state();
+    s_client.scan_candidates.clear();
+    s_client.peer_filter_enabled = false;
+    s_client.peer_name_filter_enabled = false;
+    s_client.peer_name_filter.clear();
+    s_client.candidate_scan_active = true;
+    xEventGroupClearBits(s_client.events, kEventScanComplete | kEventFailed);
+
+    if (start_scan(kScanDurationMs) != ESP_OK)
+    {
+        s_client.candidate_scan_active = false;
+        return ESP_FAIL;
+    }
+
+    const EventBits_t bits = xEventGroupWaitBits(s_client.events, kEventScanComplete | kEventFailed, pdFALSE, pdFALSE, pdMS_TO_TICKS(kScanDurationMs + 1500));
+    s_client.candidate_scan_active = false;
+    (void)ble_gap_disc_cancel();
+
+    if ((bits & kEventFailed) != 0)
+    {
+        return ESP_FAIL;
+    }
+    if ((bits & kEventScanComplete) == 0)
+    {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    std::sort(
+        s_client.scan_candidates.begin(),
+        s_client.scan_candidates.end(),
+        [](const BlePeerCandidate &left, const BlePeerCandidate &right) { return left.rssi > right.rssi; });
+
+    const size_t count = std::min(max_candidates, s_client.scan_candidates.size());
+    for (size_t index = 0; index < count; ++index)
+    {
+        out_candidates[index] = s_client.scan_candidates[index];
+    }
+    *out_count = count;
+    ESP_LOGI(TAG, "Main-board BLE candidate scan found %u board(s)", static_cast<unsigned>(s_client.scan_candidates.size()));
+    return count > 0 ? ESP_OK : ESP_ERR_NOT_FOUND;
 #endif
 }
 

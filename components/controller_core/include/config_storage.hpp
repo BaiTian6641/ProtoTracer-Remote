@@ -15,6 +15,7 @@ public:
     esp_err_t init();
     esp_err_t load_filesystem_image_config(ResolvedConfig *out) const;
     esp_err_t persist_active_config(const ResolvedConfig &config) const;
+    esp_err_t factory_reset() const;
 
 private:
     bool mounted_ = false;

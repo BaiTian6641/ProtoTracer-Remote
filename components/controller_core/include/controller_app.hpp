@@ -6,6 +6,7 @@
 #include "esp_err.h"
 #include "prototracer_types.hpp"
 
+#include <cstddef>
 #include <string>
 
 namespace prototracer
@@ -22,6 +23,8 @@ private:
     esp_err_t resolve_config_();
     esp_err_t run_runtime_loop_();
     esp_err_t refresh_active_config_();
+    esp_err_t select_initial_main_board_();
+    esp_err_t select_ble_candidate_(const BlePeerCandidate *candidates, size_t count, std::string *out_peer_id);
     esp_err_t discover_main_board_();
     esp_err_t bind_last_seen_main_board_();
     esp_err_t update_runtime_display_(bool force);
@@ -44,6 +47,7 @@ private:
     bool apply_expression_shortcut_(uint8_t expression_index, const char *status_text);
     bool randomize_expression_();
     bool toggle_shake_random_();
+    bool factory_reset_();
     bool cycle_oled_brightness_();
     bool cycle_oled_timeout_();
     bool wake_display_(uint32_t now);

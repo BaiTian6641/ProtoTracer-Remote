@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -27,6 +28,7 @@ class PairingService
 {
 public:
     esp_err_t init();
+    esp_err_t scan_main_boards(const ControllerConfig &seed, BlePeerCandidate *out_candidates, size_t max_candidates, size_t *out_count);
     esp_err_t pull_from_main_board(const ControllerConfig &seed, ResolvedConfig *out);
     esp_err_t send_control_command(const char *payload);
     bool get_last_main_board_binding(std::string *out) const;

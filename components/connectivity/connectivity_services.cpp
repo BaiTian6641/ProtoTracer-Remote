@@ -691,6 +691,16 @@ esp_err_t PairingService::pull_from_main_board(const ControllerConfig &seed, Res
     return pull_from_main_board_ble(seed, out);
 }
 
+esp_err_t PairingService::scan_main_boards(const ControllerConfig &seed, BlePeerCandidate *out_candidates, const size_t max_candidates, size_t *out_count)
+{
+    if (!initialized_)
+    {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    return scan_main_board_ble_candidates(seed, out_candidates, max_candidates, out_count);
+}
+
 esp_err_t PairingService::send_control_command(const char *payload)
 {
     if (!initialized_)

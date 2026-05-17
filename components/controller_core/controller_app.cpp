@@ -11,6 +11,7 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_random.h"
+#include "esp_system.h"
 #include "nvs_flash.h"
 
 namespace
@@ -35,7 +36,8 @@ constexpr char kSwitchMarker = '\x1F';
 constexpr uint8_t kRemoteBrightnessStep = 16;
 constexpr uint16_t kRemoteHueStepDegrees = 12;
 constexpr uint8_t kSliderSegments = 10;
-constexpr uint8_t kSettingsMenuItems = 5;
+constexpr uint8_t kSettingsMenuItems = 6;
+constexpr uint8_t kFactoryResetSettingsIndex = 4;
 constexpr uint8_t kOledBrightnessStep = 32;
 constexpr uint8_t kOledBrightnessMinimum = 32;
 constexpr uint8_t kSurpriseExpressionIndex = 9;
@@ -154,6 +156,108 @@ std::string shorten_peer_id(const std::string &peer_id)
     return peer_id.size() <= kMaxPeerChars ? peer_id : peer_id.substr(0, kMaxPeerChars);
 }
 
+void format_ble_candidate_label(const prototracer::BlePeerCandidate &candidate, char *buffer, const size_t buffer_size)
+{
+    if (buffer == nullptr || buffer_size == 0)
+    {
+        return;
+    }
+
+    std::string name = candidate.display_name.empty() ? candidate.peer_id : candidate.display_name;
+    if (name.size() > 14)
+    {
+        name = name.substr(0, 14);
+    }
+    std::snprintf(buffer, buffer_size, "%s %u%%", name.c_str(), static_cast<unsigned>(candidate.signal_percent));
+}
+
+uint32_t rgb888(const uint8_t red, const uint8_t green, const uint8_t blue)
+{
+    return (static_cast<uint32_t>(red) << 16) | (static_cast<uint32_t>(green) << 8) | blue;
+}
+
+uint32_t hue_shift_rgb888(const prototracer::VisualConfig &visual, const uint16_t hue_shift_degrees)
+{
+    const float red = static_cast<float>(visual.red) / 255.0f;
+    const float green = static_cast<float>(visual.green) / 255.0f;
+    const float blue = static_cast<float>(visual.blue) / 255.0f;
+    const float maximum = std::max(red, std::max(green, blue));
+    const float minimum = std::min(red, std::min(green, blue));
+    const float delta = maximum - minimum;
+    float hue = 0.0f;
+    if (delta > 0.0001f)
+    {
+        if (maximum == red)
+        {
+            hue = 60.0f * std::fmod(((green - blue) / delta), 6.0f);
+        }
+        else if (maximum == green)
+        {
+            hue = 60.0f * (((blue - red) / delta) + 2.0f);
+        }
+        else
+        {
+            hue = 60.0f * (((red - green) / delta) + 4.0f);
+        }
+    }
+    if (hue < 0.0f)
+    {
+        hue += 360.0f;
+    }
+    hue = std::fmod(hue + static_cast<float>(hue_shift_degrees), 360.0f);
+
+    const float chroma = delta;
+    const float x = chroma * (1.0f - std::fabs(std::fmod(hue / 60.0f, 2.0f) - 1.0f));
+    const float match = maximum - chroma;
+    float shifted_red = 0.0f;
+    float shifted_green = 0.0f;
+    float shifted_blue = 0.0f;
+    if (hue < 60.0f)
+    {
+        shifted_red = chroma;
+        shifted_green = x;
+    }
+    else if (hue < 120.0f)
+    {
+        shifted_red = x;
+        shifted_green = chroma;
+    }
+    else if (hue < 180.0f)
+    {
+        shifted_green = chroma;
+        shifted_blue = x;
+    }
+    else if (hue < 240.0f)
+    {
+        shifted_green = x;
+        shifted_blue = chroma;
+    }
+    else if (hue < 300.0f)
+    {
+        shifted_red = x;
+        shifted_blue = chroma;
+    }
+    else
+    {
+        shifted_red = chroma;
+        shifted_blue = x;
+    }
+
+    const uint8_t out_red = static_cast<uint8_t>(std::clamp<int>(static_cast<int>((shifted_red + match) * 255.0f + 0.5f), 0, 255));
+    const uint8_t out_green = static_cast<uint8_t>(std::clamp<int>(static_cast<int>((shifted_green + match) * 255.0f + 0.5f), 0, 255));
+    const uint8_t out_blue = static_cast<uint8_t>(std::clamp<int>(static_cast<int>((shifted_blue + match) * 255.0f + 0.5f), 0, 255));
+    return rgb888(out_red, out_green, out_blue);
+}
+
+void format_rgb_hex_line(char *buffer, const size_t buffer_size, const char *label, const uint32_t rgb)
+{
+    if (buffer == nullptr || buffer_size == 0)
+    {
+        return;
+    }
+    std::snprintf(buffer, buffer_size, "%s #%02X%02X%02X", label, static_cast<unsigned>((rgb >> 16) & 0xFFU), static_cast<unsigned>((rgb >> 8) & 0xFFU), static_cast<unsigned>(rgb & 0xFFU));
+}
+
 const char *battery_label(const prototracer::BatteryChemistry chemistry, const prototracer::UiLanguage language)
 {
     switch (chemistry)
@@ -214,6 +318,9 @@ void format_settings_item_label(const uint8_t index,
         }
         break;
     case 4:
+        std::snprintf(buffer, buffer_size, "%s", localized(language, "Factory reset", "恢复出厂"));
+        break;
+    case 5:
     default:
         std::snprintf(buffer, buffer_size, "%s", localized(language, "< Back", "< 返回"));
         break;
@@ -534,26 +641,42 @@ esp_err_t ControllerApp::resolve_config_()
     ESP_LOGI(TAG, "Resolve config: seed source=%s", config_source_name(active_config_.source));
 
     ResolvedConfig candidate = {};
-    ESP_LOGI(TAG, "Resolve config: scan main board");
-    ESP_RETURN_ON_ERROR(display_service_.show_bind_progress(localized(seed_language, "Scan main board", "扫描主板"), 15), TAG, "Display pairing state failed");
-    if (pairing_service_.pull_from_main_board(seed_config_.controller, &candidate) == ESP_OK)
+    const bool first_ble_pairing = seed_config_.controller.pairing.bound_peer_id.empty();
+    if (first_ble_pairing)
     {
-        preserve_dynamic_seed_values(&candidate, seed_config_);
-        active_config_ = candidate;
-        seed_config_ = active_config_;
-        display_service_.set_language(active_config_.controller.ui_language);
-        ESP_RETURN_ON_ERROR(status_led_.set_mode(StatusLedMode::Linked), TAG, "LED linked state failed");
-        ESP_RETURN_ON_ERROR(
-            display_service_.show_status(
-                localized(active_config_.controller.ui_language, "Ready", "就绪"),
-                ready_detail_for_source(active_config_.source, active_config_.controller.ui_language),
-                StatusLedMode::Linked),
-            TAG,
-            "Display ready state failed");
-        return ESP_OK;
+        const esp_err_t select_err = select_initial_main_board_();
+        if (select_err != ESP_OK)
+        {
+            ESP_LOGW(TAG, "First-boot main-board selection unavailable: %s", esp_err_to_name(select_err));
+        }
     }
 
-    (void)bind_last_seen_main_board_();
+    if (!seed_config_.controller.pairing.bound_peer_id.empty())
+    {
+        ESP_LOGI(TAG, "Resolve config: connect selected main board");
+        ESP_RETURN_ON_ERROR(display_service_.show_bind_progress(localized(seed_language, "Connect board", "连接主板"), 35), TAG, "Display pairing state failed");
+        if (pairing_service_.pull_from_main_board(seed_config_.controller, &candidate) == ESP_OK)
+        {
+            preserve_dynamic_seed_values(&candidate, seed_config_);
+            active_config_ = candidate;
+            seed_config_ = active_config_;
+            display_service_.set_language(active_config_.controller.ui_language);
+            ESP_RETURN_ON_ERROR(status_led_.set_mode(StatusLedMode::Linked), TAG, "LED linked state failed");
+            ESP_RETURN_ON_ERROR(
+                display_service_.show_status(
+                    localized(active_config_.controller.ui_language, "Ready", "就绪"),
+                    ready_detail_for_source(active_config_.source, active_config_.controller.ui_language),
+                    StatusLedMode::Linked),
+                TAG,
+                "Display ready state failed");
+            return ESP_OK;
+        }
+
+        if (!first_ble_pairing)
+        {
+            (void)bind_last_seen_main_board_();
+        }
+    }
 
     ESP_LOGI(TAG, "Resolve config: connect saved Wi-Fi");
     ESP_RETURN_ON_ERROR(display_service_.show_bind_progress(localized(seed_language, "Wi-Fi link", "连接 Wi-Fi"), 45), TAG, "Display Wi-Fi state failed");
@@ -618,6 +741,152 @@ esp_err_t ControllerApp::refresh_active_config_()
     return config_storage_.persist_active_config(active_config_);
 }
 
+esp_err_t ControllerApp::select_initial_main_board_()
+{
+    if (!seed_config_.controller.pairing.bound_peer_id.empty())
+    {
+        return ESP_OK;
+    }
+
+    const UiLanguage language = seed_config_.controller.ui_language;
+    ESP_RETURN_ON_ERROR(display_service_.show_bind_progress(localized(language, "BLE scan", "蓝牙扫描"), 25), TAG, "Display BLE scan state failed");
+
+    BlePeerCandidate candidates[DisplayService::kTestMenuMaxLines] = {};
+    size_t candidate_count = 0;
+    const esp_err_t scan_err = pairing_service_.scan_main_boards(seed_config_.controller, candidates, DisplayService::kTestMenuMaxLines, &candidate_count);
+    if (scan_err != ESP_OK || candidate_count == 0)
+    {
+        ESP_LOGW(TAG, "No selectable ProtoTracer BLE main boards found: %s", esp_err_to_name(scan_err));
+        (void)display_service_.show_error(
+            localized(language, "Pairing", "配对"),
+            localized(language, "No board found", "未找到主板"),
+            localized(language, "Check main board power", "检查主板电源"));
+        vTaskDelay(pdMS_TO_TICKS(1200));
+        return scan_err == ESP_OK ? ESP_ERR_NOT_FOUND : scan_err;
+    }
+
+    std::string peer_id;
+    const esp_err_t select_err = select_ble_candidate_(candidates, candidate_count, &peer_id);
+    if (select_err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Main-board BLE selection cancelled: %s", esp_err_to_name(select_err));
+        return select_err;
+    }
+
+    seed_config_.controller.pairing.bound_peer_id = peer_id;
+    active_config_.controller.pairing.bound_peer_id = peer_id;
+    ESP_LOGI(TAG, "User selected ProtoTracer BLE main board: %s", peer_id.c_str());
+    return config_storage_.persist_active_config(active_config_);
+}
+
+esp_err_t ControllerApp::select_ble_candidate_(const BlePeerCandidate *candidates, const size_t count, std::string *out_peer_id)
+{
+    if (candidates == nullptr || count == 0 || out_peer_id == nullptr)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const UiLanguage language = seed_config_.controller.ui_language;
+    uint8_t selected_index = 0;
+    int8_t last_direction = 0;
+    bool redraw = true;
+    uint8_t previous_bits = 0xFF;
+    InputSnapshot snapshot = {};
+    if (input_router_.get_snapshot(&snapshot) == ESP_OK)
+    {
+        previous_bits = snapshot.raw_bits;
+    }
+
+    while (true)
+    {
+        if (redraw)
+        {
+            char lines[DisplayService::kTestMenuMaxLines][DisplayService::kTestMenuLineLength] = {};
+            const uint8_t line_count = static_cast<uint8_t>(std::min<size_t>(count, DisplayService::kTestMenuMaxLines));
+            for (uint8_t index = 0; index < line_count; ++index)
+            {
+                format_ble_candidate_label(candidates[index], lines[index], sizeof(lines[index]));
+            }
+            ESP_RETURN_ON_ERROR(
+                display_service_.show_test_menu(
+                    localized(language, "Select BLE", "选择蓝牙"),
+                    localized(language, "Stick move B1 choose", "摇杆移动 B1选择"),
+                    lines,
+                    line_count,
+                    selected_index),
+                TAG,
+                "Display BLE candidate list failed");
+            redraw = false;
+        }
+
+        InputEvent event = {};
+        while (input_router_.wait_for_event(&event, pdMS_TO_TICKS(40)) == ESP_OK)
+        {
+            if (event.type != InputEvent::Type::ButtonPressed)
+            {
+                continue;
+            }
+            if (event.source == board::ExpanderInputBit::Button2)
+            {
+                return ESP_ERR_INVALID_RESPONSE;
+            }
+            if (event.source == board::ExpanderInputBit::JoystickButton ||
+                event.source == board::ExpanderInputBit::Button0 ||
+                event.source == board::ExpanderInputBit::Button1)
+            {
+                *out_peer_id = candidates[selected_index].peer_id;
+                return ESP_OK;
+            }
+        }
+
+        if (input_router_.get_snapshot(&snapshot) == ESP_OK)
+        {
+            const auto is_pressed = [&snapshot](const board::ExpanderInputBit bit) {
+                return snapshot.is_asserted(bit);
+            };
+            const auto was_pressed = [previous_bits](const board::ExpanderInputBit bit) {
+                return (previous_bits & (1U << static_cast<uint8_t>(bit))) == 0;
+            };
+
+            const bool select_pressed = (is_pressed(board::ExpanderInputBit::JoystickButton) && !was_pressed(board::ExpanderInputBit::JoystickButton)) ||
+                                        (is_pressed(board::ExpanderInputBit::Button0) && !was_pressed(board::ExpanderInputBit::Button0)) ||
+                                        (is_pressed(board::ExpanderInputBit::Button1) && !was_pressed(board::ExpanderInputBit::Button1));
+            if (select_pressed)
+            {
+                *out_peer_id = candidates[selected_index].peer_id;
+                return ESP_OK;
+            }
+            if (is_pressed(board::ExpanderInputBit::Button2) && !was_pressed(board::ExpanderInputBit::Button2))
+            {
+                return ESP_ERR_INVALID_RESPONSE;
+            }
+            previous_bits = snapshot.raw_bits;
+        }
+
+        JoystickSample joystick = {};
+        if (input_router_.read_joystick(&joystick) == ESP_OK && joystick.valid)
+        {
+            int8_t direction = 0;
+            if (joystick.normalized_x >= 35)
+            {
+                direction = 1;
+            }
+            else if (joystick.normalized_x <= -35)
+            {
+                direction = -1;
+            }
+
+            if (direction != 0 && direction != last_direction)
+            {
+                const int next = (static_cast<int>(selected_index) + direction + static_cast<int>(count)) % static_cast<int>(count);
+                selected_index = static_cast<uint8_t>(next);
+                redraw = true;
+            }
+            last_direction = direction;
+        }
+    }
+}
+
 esp_err_t ControllerApp::bind_last_seen_main_board_()
 {
     std::string bound_peer_id;
@@ -634,22 +903,16 @@ esp_err_t ControllerApp::bind_last_seen_main_board_()
 
 esp_err_t ControllerApp::discover_main_board_()
 {
-    const UiLanguage language = active_config_.controller.ui_language;
     ResolvedConfig candidate = {};
-    ResolvedConfig discovery_seed = seed_config_;
-    discovery_seed.controller.pairing.bound_peer_id.clear();
+    seed_config_.controller.pairing.bound_peer_id.clear();
+    active_config_.controller.pairing.bound_peer_id.clear();
 
-    ESP_RETURN_ON_ERROR(display_service_.show_bind_progress(localized(language, "Discover", "搜索"), 30), TAG, "Display discover state failed");
+    ESP_RETURN_ON_ERROR(select_initial_main_board_(), TAG, "Main-board selection failed");
+    ESP_RETURN_ON_ERROR(display_service_.show_bind_progress(localized(active_config_.controller.ui_language, "Connect board", "连接主板"), 55), TAG, "Display discover state failed");
 
-    const esp_err_t err = pairing_service_.pull_from_main_board(discovery_seed.controller, &candidate);
+    const esp_err_t err = pairing_service_.pull_from_main_board(seed_config_.controller, &candidate);
     if (err != ESP_OK)
     {
-        const esp_err_t bind_err = bind_last_seen_main_board_();
-        if (bind_err == ESP_OK)
-        {
-            control_status_ = "Bound";
-            return ESP_OK;
-        }
         return err;
     }
 
@@ -830,6 +1093,10 @@ bool ControllerApp::perform_current_page_action_()
         {
             return cycle_oled_timeout_();
         }
+        if (settings_cursor_ == kFactoryResetSettingsIndex)
+        {
+            return factory_reset_();
+        }
         return handle_back_action_();
     case RuntimePage::Battery:
         return refresh_battery_and_charger_("Gauge", "Gauge err");
@@ -905,6 +1172,89 @@ bool ControllerApp::toggle_shake_random_()
     (void)config_storage_.persist_active_config(active_config_);
     control_status_ = shake_random_enabled_ ? "Shake on" : "Shake off";
     return true;
+}
+
+bool ControllerApp::factory_reset_()
+{
+    const UiLanguage language = active_config_.controller.ui_language;
+    char lines[DisplayService::kTestMenuMaxLines][DisplayService::kTestMenuLineLength] = {};
+    std::snprintf(lines[0], sizeof(lines[0]), "%s", localized(language, "Erase saved config", "清除已存配置"));
+    std::snprintf(lines[1], sizeof(lines[1]), "%s", localized(language, "B1 confirm", "B1 确认"));
+    std::snprintf(lines[2], sizeof(lines[2]), "%s", localized(language, "B2 cancel", "B2 取消"));
+    if (display_service_.show_test_menu(localized(language, "Factory", "出厂"), nullptr, lines, 3, DisplayService::kTestMenuNoCursor) != ESP_OK)
+    {
+        return false;
+    }
+
+    uint8_t previous_bits = 0xFF;
+    InputSnapshot snapshot = {};
+    if (input_router_.get_snapshot(&snapshot) == ESP_OK)
+    {
+        previous_bits = snapshot.raw_bits;
+    }
+
+    while (true)
+    {
+        InputEvent event = {};
+        while (input_router_.wait_for_event(&event, pdMS_TO_TICKS(50)) == ESP_OK)
+        {
+            if (event.type != InputEvent::Type::ButtonPressed)
+            {
+                continue;
+            }
+            if (event.source == board::ExpanderInputBit::Button2)
+            {
+                control_status_ = "Reset cancel";
+                return true;
+            }
+            if (event.source == board::ExpanderInputBit::JoystickButton ||
+                event.source == board::ExpanderInputBit::Button0 ||
+                event.source == board::ExpanderInputBit::Button1)
+            {
+                const esp_err_t reset_err = config_storage_.factory_reset();
+                if (reset_err != ESP_OK)
+                {
+                    control_status_ = esp_err_to_name(reset_err);
+                    return true;
+                }
+                (void)display_service_.show_status(localized(language, "Reset", "重置"), localized(language, "Rebooting", "正在重启"), StatusLedMode::Booting);
+                vTaskDelay(pdMS_TO_TICKS(500));
+                esp_restart();
+            }
+        }
+
+        if (input_router_.get_snapshot(&snapshot) == ESP_OK)
+        {
+            const auto is_pressed = [&snapshot](const board::ExpanderInputBit bit) {
+                return snapshot.is_asserted(bit);
+            };
+            const auto was_pressed = [previous_bits](const board::ExpanderInputBit bit) {
+                return (previous_bits & (1U << static_cast<uint8_t>(bit))) == 0;
+            };
+
+            const bool confirm_pressed = (is_pressed(board::ExpanderInputBit::JoystickButton) && !was_pressed(board::ExpanderInputBit::JoystickButton)) ||
+                                         (is_pressed(board::ExpanderInputBit::Button0) && !was_pressed(board::ExpanderInputBit::Button0)) ||
+                                         (is_pressed(board::ExpanderInputBit::Button1) && !was_pressed(board::ExpanderInputBit::Button1));
+            if (confirm_pressed)
+            {
+                const esp_err_t reset_err = config_storage_.factory_reset();
+                if (reset_err != ESP_OK)
+                {
+                    control_status_ = esp_err_to_name(reset_err);
+                    return true;
+                }
+                (void)display_service_.show_status(localized(language, "Reset", "重置"), localized(language, "Rebooting", "正在重启"), StatusLedMode::Booting);
+                vTaskDelay(pdMS_TO_TICKS(500));
+                esp_restart();
+            }
+            if (is_pressed(board::ExpanderInputBit::Button2) && !was_pressed(board::ExpanderInputBit::Button2))
+            {
+                control_status_ = "Reset cancel";
+                return true;
+            }
+            previous_bits = snapshot.raw_bits;
+        }
+    }
 }
 
 bool ControllerApp::cycle_oled_brightness_()
@@ -1467,21 +1817,27 @@ esp_err_t ControllerApp::update_runtime_display_(const bool force)
         line_count = 4;
         break;
     case RuntimePage::Hue:
+    {
+        const uint32_t base_color = rgb888(active_config_.controller.visual.red, active_config_.controller.visual.green, active_config_.controller.visual.blue);
+        const uint32_t shifted_color = hue_shift_rgb888(active_config_.controller.visual, hue_shift_degrees_);
         std::snprintf(lines[0], sizeof(lines[0]), "Hue %u deg", static_cast<unsigned>(hue_shift_degrees_));
         build_slider_bar(slider, sizeof(slider), hue_shift_degrees_, 0, 360);
         std::snprintf(lines[1], sizeof(lines[1]), "%s", slider);
-        std::snprintf(lines[2], sizeof(lines[2]), "%s", localized(language, "Stick adjust", "摇杆调整"));
-        std::snprintf(lines[3], sizeof(lines[3]), "%s", localized(language, "B1/B0 apply B2 back", "B1/B0应用 B2返"));
+        format_rgb_hex_line(lines[2], sizeof(lines[2]), "Base", base_color);
+        format_rgb_hex_line(lines[3], sizeof(lines[3]), "Now", shifted_color);
+        std::snprintf(lines[4], sizeof(lines[4]), "%s", localized(language, "Stick adjust", "摇杆调整"));
+        std::snprintf(lines[5], sizeof(lines[5]), "%s", localized(language, "B1 apply B2", "B1应用 B2返"));
         selected_index = DisplayService::kTestMenuNoCursor;
-        line_count = 4;
+        line_count = 6;
         break;
+    }
     case RuntimePage::Settings:
         format_settings_item_label(0, language, voice_enabled_, shake_random_enabled_, oled_brightness_, oled_timeout_seconds_, lines[0], sizeof(lines[0]));
         format_settings_item_label(1, language, voice_enabled_, shake_random_enabled_, oled_brightness_, oled_timeout_seconds_, lines[1], sizeof(lines[1]));
         format_settings_item_label(2, language, voice_enabled_, shake_random_enabled_, oled_brightness_, oled_timeout_seconds_, lines[2], sizeof(lines[2]));
         format_settings_item_label(3, language, voice_enabled_, shake_random_enabled_, oled_brightness_, oled_timeout_seconds_, lines[3], sizeof(lines[3]));
         format_settings_item_label(4, language, voice_enabled_, shake_random_enabled_, oled_brightness_, oled_timeout_seconds_, lines[4], sizeof(lines[4]));
-        std::snprintf(lines[5], sizeof(lines[5]), "%s", localized(language, "B1/B0 cycle B2", "B1/B0切 B2返"));
+        format_settings_item_label(5, language, voice_enabled_, shake_random_enabled_, oled_brightness_, oled_timeout_seconds_, lines[5], sizeof(lines[5]));
         selected_index = settings_cursor_;
         line_count = 6;
         break;

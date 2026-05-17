@@ -55,6 +55,14 @@ struct PairingConfig
     std::string bound_peer_id;
 };
 
+struct BlePeerCandidate
+{
+    std::string display_name;
+    std::string peer_id;
+    int8_t rssi = -100;
+    uint8_t signal_percent = 0;
+};
+
 struct NetworkConfig
 {
     std::string hostname_prefix;

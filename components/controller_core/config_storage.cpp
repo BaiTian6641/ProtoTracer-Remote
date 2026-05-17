@@ -220,4 +220,27 @@ esp_err_t ConfigStorage::persist_active_config(const ResolvedConfig &config) con
     nvs_close(handle);
     return err;
 }
+
+esp_err_t ConfigStorage::factory_reset() const
+{
+    nvs_handle_t handle = 0;
+    esp_err_t err = nvs_open(kControllerNamespace, NVS_READWRITE, &handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND)
+    {
+        return ESP_OK;
+    }
+    if (err != ESP_OK)
+    {
+        return err;
+    }
+
+    err = nvs_erase_all(handle);
+    if (err == ESP_OK)
+    {
+        err = nvs_commit(handle);
+    }
+
+    nvs_close(handle);
+    return err;
+}
 } // namespace prototracer
