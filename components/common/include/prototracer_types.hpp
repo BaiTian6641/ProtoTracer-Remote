@@ -75,6 +75,7 @@ struct NetworkConfig
 struct VisualConfig
 {
     std::string animation_asset;
+    std::string animation_name;
     uint8_t expression_count = 17;
     std::vector<std::string> expression_names;
     uint8_t red = 25;

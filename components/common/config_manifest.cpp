@@ -194,6 +194,7 @@ esp_err_t build_failsafe_config(ResolvedConfig *out)
     out->controller.repo.auth_token_nvs_key = "repo_access_token";
     out->controller.repo.auth_scheme = "bearer";
     out->controller.visual.animation_asset = "config/default_manifest.json";
+    out->controller.visual.animation_name = "Protogen";
     out->controller.visual.expression_count = 17;
     out->controller.display.oled_brightness = 192;
     out->controller.display.oled_timeout_seconds = 30;
@@ -264,6 +265,7 @@ esp_err_t parse_manifest_json(const char *json, const ConfigSourceKind source, R
     if (cJSON_IsObject(visual))
     {
         out->controller.visual.animation_asset = json_string(visual, "animation_asset", out->controller.visual.animation_asset.c_str());
+        out->controller.visual.animation_name = json_string_first(visual, "animation_name", "user", out->controller.visual.animation_name.c_str());
         out->controller.visual.expression_count = json_uint8(visual, "expression_count", out->controller.visual.expression_count, 1, 64);
         parse_expression_names(visual, &out->controller.visual);
         out->controller.visual.red = json_color(visual, "red", out->controller.visual.red);

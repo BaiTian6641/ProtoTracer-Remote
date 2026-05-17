@@ -115,6 +115,36 @@ const char *expression_name_for(const prototracer::VisualConfig &visual, const u
     return fallback != nullptr ? fallback : "Expression";
 }
 
+std::string shorten_text(const std::string &value, const size_t limit)
+{
+    if (value.size() <= limit)
+    {
+        return value;
+    }
+
+    if (limit <= 3)
+    {
+        return value.substr(0, limit);
+    }
+
+    return value.substr(0, limit - 3) + "...";
+}
+
+const char *animation_name_for(const prototracer::VisualConfig &visual)
+{
+    if (!visual.animation_name.empty())
+    {
+        return visual.animation_name.c_str();
+    }
+
+    if (!visual.animation_asset.empty())
+    {
+        return visual.animation_asset.c_str();
+    }
+
+    return "Animation";
+}
+
 uint32_t now_ms()
 {
     return static_cast<uint32_t>(esp_log_timestamp());
@@ -391,6 +421,10 @@ void preserve_dynamic_seed_values(prototracer::ResolvedConfig *candidate, const 
     {
         candidate->controller.visual.expression_names = current.controller.visual.expression_names;
     }
+        if (candidate->controller.visual.animation_name.empty())
+        {
+            candidate->controller.visual.animation_name = current.controller.visual.animation_name;
+        }
     candidate->controller.display = current.controller.display;
     candidate->controller.features.enable_shake_random = current.controller.features.enable_shake_random;
 }
@@ -1821,7 +1855,8 @@ esp_err_t ControllerApp::update_runtime_display_(const bool force)
 
     if (!detail_view_active_)
     {
-        std::snprintf(lines[0], sizeof(lines[0]), "Expr %u %s", static_cast<unsigned>(expression_index_ + 1), expression_name_for(active_config_.controller.visual, expression_index_));
+        const std::string animation_title = shorten_text(animation_name_for(active_config_.controller.visual), 11);
+        std::snprintf(lines[0], sizeof(lines[0]), "%s", animation_title.c_str());
         std::snprintf(lines[1], sizeof(lines[1]), "Bright %u", static_cast<unsigned>(brightness_level_));
         std::snprintf(lines[2], sizeof(lines[2]), "Hue %u deg", static_cast<unsigned>(hue_shift_degrees_));
         std::snprintf(lines[3], sizeof(lines[3]), "Settings V%s S%s", voice_enabled_ ? "1" : "0", shake_random_enabled_ ? "1" : "0");
@@ -1844,14 +1879,15 @@ esp_err_t ControllerApp::update_runtime_display_(const bool force)
     switch (page)
     {
     case RuntimePage::Expression:
-        std::snprintf(lines[0], sizeof(lines[0]), "%s", expression_name_for(active_config_.controller.visual, expression_index_));
+        std::snprintf(lines[0], sizeof(lines[0]), "%s", shorten_text(animation_name_for(active_config_.controller.visual), 16).c_str());
         build_slider_bar(slider, sizeof(slider), expression_index_, 0, std::max<int>(1, expression_count_) - 1);
         std::snprintf(lines[1], sizeof(lines[1]), "%s", slider);
         std::snprintf(lines[2], sizeof(lines[2]), "Face %u / %u", static_cast<unsigned>(expression_index_ + 1), static_cast<unsigned>(expression_count_));
-        std::snprintf(lines[3], sizeof(lines[3]), "%s", localized(language, "Stick adjust", "摇杆调整"));
-        std::snprintf(lines[4], sizeof(lines[4]), "%s", localized(language, "B1/B0 apply B2 back", "B1/B0应用 B2返"));
+        std::snprintf(lines[3], sizeof(lines[3]), "%s", expression_name_for(active_config_.controller.visual, expression_index_));
+        std::snprintf(lines[4], sizeof(lines[4]), "%s", localized(language, "Stick adjust", "摇杆调整"));
+        std::snprintf(lines[5], sizeof(lines[5]), "%s", localized(language, "B1/B0 apply B2 back", "B1/B0应用 B2返"));
         selected_index = DisplayService::kTestMenuNoCursor;
-        line_count = 5;
+        line_count = 6;
         break;
     case RuntimePage::Brightness:
         std::snprintf(lines[0], sizeof(lines[0]), "Bright %u / 255", static_cast<unsigned>(brightness_level_));
