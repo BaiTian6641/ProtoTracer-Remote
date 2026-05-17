@@ -27,9 +27,9 @@ constexpr uint32_t kGesturePollIntervalMs = 160;
 constexpr uint32_t kGestureLogIntervalMs = 2000;
 constexpr uint32_t kGestureActionCooldownMs = 700;
 constexpr uint32_t kMotionActionCooldownMs = 1500;
-constexpr uint32_t kShakePairWindowMs = 550;
-constexpr float kShakeDeltaThresholdMg = 560.0f;
-constexpr float kShakeVerticalDominance = 1.35f;
+constexpr uint32_t kShakePairWindowMs = 900;
+constexpr float kShakeDeltaThresholdMg = 420.0f;
+constexpr float kShakeVerticalDominance = 1.15f;
 constexpr uint16_t kProximitySurpriseThreshold = 1200;
 constexpr uint16_t kProximitySurpriseMargin = 120;
 constexpr char kColorMarker = '\x1E';
@@ -1587,11 +1587,12 @@ bool ControllerApp::handle_gesture_sample_(const GestureSample &sample)
 bool ControllerApp::detect_shake_pair_(const MotionSample &sample, const uint32_t now)
 {
     int8_t direction = 0;
+    float abs_delta_y = 0.0f;
     if (last_motion_.valid)
     {
         const float delta_y = sample.y_mg - last_motion_.y_mg;
         const float abs_delta_x = std::fabs(sample.x_mg - last_motion_.x_mg);
-        const float abs_delta_y = std::fabs(delta_y);
+        abs_delta_y = std::fabs(delta_y);
         const float abs_delta_z = std::fabs(sample.z_mg - last_motion_.z_mg);
         if (abs_delta_y >= kShakeDeltaThresholdMg &&
             abs_delta_y >= (abs_delta_x * kShakeVerticalDominance) &&
@@ -1614,12 +1615,15 @@ bool ControllerApp::detect_shake_pair_(const MotionSample &sample, const uint32_
         return false;
     }
 
-    const bool paired = last_shake_direction_ != 0 &&
-                        direction != last_shake_direction_ &&
-                        (now - last_shake_peak_ms_) <= kShakePairWindowMs;
+    const bool opposite_pair = last_shake_direction_ != 0 &&
+                               direction != last_shake_direction_ &&
+                               (now - last_shake_peak_ms_) <= kShakePairWindowMs;
+    const bool rapid_repeat = last_shake_peak_ms_ != 0 &&
+                              (now - last_shake_peak_ms_) <= kShakePairWindowMs &&
+                              abs_delta_y >= (kShakeDeltaThresholdMg * 1.45f);
     last_shake_direction_ = direction;
     last_shake_peak_ms_ = now;
-    return paired;
+    return opposite_pair || rapid_repeat;
 }
 
 bool ControllerApp::handle_motion_sample_(const MotionSample &sample)

@@ -18,6 +18,6 @@
         }
     ],
     "idf.currentSetup": "C:\\esp\\v6.0\\esp-idf",
-    "idf.portWin": "COM8",
+    "idf.portWin": "COM9",
     "idf.flashType": "UART"
 }

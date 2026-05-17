@@ -39,6 +39,9 @@ constexpr bool kUseExpanderIrq = true;
 constexpr float kThreeCellNiMhEmptyVoltage = 2.70f;
 constexpr float kThreeCellNiMhFullVoltage = 4.35f;
 constexpr float kChargeCurrentDetectThresholdMa = 25.0f;
+constexpr uint8_t kImuInitAttempts = 4;
+constexpr uint32_t kImuInitRetryDelayMs = 25;
+constexpr uint32_t kImuReinitCooldownMs = 1500;
 
 struct JoystickAdcState
 {
@@ -86,6 +89,9 @@ prototracer::BatteryChemistry g_last_charger_chemistry = prototracer::BatteryChe
 bool g_sensor_rail_output_ready = false;
 JoystickAdcState g_joystick_adc = {};
 led_strip_handle_t g_status_led_strip = nullptr;
+prototracer::Lsm6dso::Config g_imu_config = {};
+bool g_imu_config_valid = false;
+uint32_t g_last_imu_init_attempt_ms = 0;
 
 esp_err_t ensure_sensor_rail_enabled();
 
@@ -234,6 +240,74 @@ esp_err_t ensure_sensor_rail_enabled()
 
     ESP_RETURN_ON_ERROR(gpio_set_level(prototracer::board::kPinSensorRailEnable, 1), TAG, "Failed to enable sensor rail");
     return ESP_OK;
+}
+
+esp_err_t init_imu_with_retry(const prototracer::Lsm6dso::Config &config, const bool log_each_attempt)
+{
+    g_imu_config = config;
+    g_imu_config_valid = true;
+
+    esp_err_t last_err = ESP_FAIL;
+    for (uint8_t attempt = 0; attempt < kImuInitAttempts; ++attempt)
+    {
+        g_last_imu_init_attempt_ms = tick_ms_now();
+        last_err = ensure_sensor_rail_enabled();
+        if (last_err == ESP_OK)
+        {
+            last_err = gpio_set_level(prototracer::board::kPinImuCs, 1);
+        }
+        if (last_err == ESP_OK)
+        {
+            last_err = shared_imu().init(&shared_i2c_bus(), config);
+        }
+
+        if (last_err == ESP_OK)
+        {
+            if (attempt > 0)
+            {
+                ESP_LOGI(TAG, "IMU init recovered after %u retries", static_cast<unsigned>(attempt));
+            }
+            return ESP_OK;
+        }
+
+        if (log_each_attempt)
+        {
+            ESP_LOGW(TAG,
+                     "IMU init attempt %u/%u failed: %s",
+                     static_cast<unsigned>(attempt + 1),
+                     static_cast<unsigned>(kImuInitAttempts),
+                     esp_err_to_name(last_err));
+        }
+        vTaskDelay(pdMS_TO_TICKS(kImuInitRetryDelayMs));
+    }
+
+    return last_err;
+}
+
+esp_err_t ensure_imu_ready()
+{
+    if (shared_imu().ready())
+    {
+        return ESP_OK;
+    }
+
+    if (!g_imu_config_valid)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    const uint32_t now = tick_ms_now();
+    if ((now - g_last_imu_init_attempt_ms) < kImuReinitCooldownMs)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    const esp_err_t err = init_imu_with_retry(g_imu_config, false);
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "IMU re-init attempt failed: %s", esp_err_to_name(err));
+    }
+    return err;
 }
 
 int normalize_axis_percent(const int raw, const int center)
@@ -423,7 +497,7 @@ void queue_sensor_fault(const prototracer::board::ExpanderInputBit source, const
 
 void process_imu_interrupt(const prototracer::board::ExpanderInputBit source)
 {
-    if (!shared_imu().ready())
+    if (ensure_imu_ready() != ESP_OK)
     {
         return;
     }
@@ -714,7 +788,7 @@ esp_err_t SensorHub::init()
     Lsm6dso::Config imu_config = {};
     imu_config.address = board::kLsm6dsoAddress;
     imu_config.route_sleep_change_to_int2 = true;
-    const esp_err_t imu_err = shared_imu().init(&shared_i2c_bus(), imu_config);
+    const esp_err_t imu_err = init_imu_with_retry(imu_config, true);
     if (imu_err != ESP_OK)
     {
         ESP_LOGW(TAG, "IMU init failed: %s", esp_err_to_name(imu_err));
@@ -842,7 +916,7 @@ esp_err_t SensorHub::sample_motion_now(MotionSample *out) const
     {
         return ESP_ERR_INVALID_ARG;
     }
-    if (!shared_imu().ready())
+    if (ensure_imu_ready() != ESP_OK)
     {
         return ESP_ERR_INVALID_STATE;
     }
