@@ -672,6 +672,18 @@ esp_err_t PairingService::init()
     }
 
     ESP_RETURN_ON_ERROR(err, TAG, "Main-board BLE client init failed");
+
+    // Register a lightweight notification callback so that unsolicited
+    // control.state messages from the main board update the synced state
+    // snapshot (readable by the controller app on the main loop).
+    set_main_board_ble_notification_callback(
+        [](const char * /*json*/, size_t /*length*/, void * /*user_data*/) {
+            // State parsing is already handled inside main_board_ble_client's
+            // process_notification_json; the callback here is a no-op hook
+            // that can be extended in the future for app-level event dispatch.
+        },
+        nullptr);
+
     initialized_ = true;
     ESP_LOGI(TAG, "Pairing service initialized");
     return ESP_OK;
@@ -729,6 +741,16 @@ bool PairingService::get_signal_strength(uint8_t *out_percent) const
     }
 
     return get_main_board_ble_signal_strength(out_percent);
+}
+
+bool PairingService::get_main_board_state(MainBoardState *out) const
+{
+    if (!initialized_ || out == nullptr)
+    {
+        return false;
+    }
+
+    return get_main_board_ble_state(out);
 }
 
 esp_err_t RepoClient::init()

@@ -75,35 +75,6 @@ const char *localized(const prototracer::UiLanguage language, const char *englis
     return language == prototracer::UiLanguage::Chinese ? chinese : english;
 }
 
-const char *default_expression_name(const uint8_t index)
-{
-    static constexpr const char *kNames[] = {
-        "Default",
-        "Angry",
-        "Doubt",
-        "Frown",
-        "Heart",
-        "Sad",
-        "Surprise",
-        "Happy",
-        "OwO",
-        "Surprise",
-        "Sleepy",
-        "Curious",
-        "Excited",
-        "Wink",
-        "Shy",
-        "Focus",
-        "Custom",
-    };
-
-    if (index < (sizeof(kNames) / sizeof(kNames[0])))
-    {
-        return kNames[index];
-    }
-    return nullptr;
-}
-
 const char *expression_name_for(const prototracer::VisualConfig &visual, const uint8_t index)
 {
     if (index < visual.expression_names.size() && !visual.expression_names[index].empty())
@@ -111,8 +82,11 @@ const char *expression_name_for(const prototracer::VisualConfig &visual, const u
         return visual.expression_names[index].c_str();
     }
 
-    const char *fallback = default_expression_name(index);
-    return fallback != nullptr ? fallback : "Expression";
+    // No expression names received from the main board yet.
+    // Return a generic placeholder so the UI never shows hardcoded built-in names.
+    static char fallback_buffer[16] = {};
+    std::snprintf(fallback_buffer, sizeof(fallback_buffer), "Expr %u", static_cast<unsigned>(index + 1));
+    return fallback_buffer;
 }
 
 std::string shorten_text(const std::string &value, const size_t limit)
@@ -421,10 +395,18 @@ void preserve_dynamic_seed_values(prototracer::ResolvedConfig *candidate, const 
     {
         candidate->controller.visual.expression_names = current.controller.visual.expression_names;
     }
-        if (candidate->controller.visual.animation_name.empty())
-        {
-            candidate->controller.visual.animation_name = current.controller.visual.animation_name;
-        }
+    if (candidate->controller.visual.animation_name.empty())
+    {
+        candidate->controller.visual.animation_name = current.controller.visual.animation_name;
+    }
+    if (candidate->controller.visual.animation_asset.empty())
+    {
+        candidate->controller.visual.animation_asset = current.controller.visual.animation_asset;
+    }
+    if (candidate->controller.visual.expression_count == 0)
+    {
+        candidate->controller.visual.expression_count = current.controller.visual.expression_count;
+    }
     candidate->controller.display = current.controller.display;
     candidate->controller.features.enable_shake_random = current.controller.features.enable_shake_random;
 }
@@ -591,6 +573,14 @@ esp_err_t ControllerApp::start()
     {
         expression_index_ = static_cast<uint8_t>(expression_count_ - 1);
     }
+
+    ESP_LOGI(TAG, "Active config: source=%s anim='%s' expr_count=%u expr_names=%u anim_asset='%s'",
+             config_source_name(active_config_.source),
+             active_config_.controller.visual.animation_name.c_str(),
+             static_cast<unsigned>(expression_count_),
+             static_cast<unsigned>(active_config_.controller.visual.expression_names.size()),
+             active_config_.controller.visual.animation_asset.c_str());
+
     apply_display_settings_();
     shake_random_enabled_ = active_config_.controller.features.enable_shake_random;
 
@@ -740,6 +730,17 @@ esp_err_t ControllerApp::resolve_config_()
             active_config_ = candidate;
             seed_config_ = active_config_;
             display_service_.set_language(active_config_.controller.ui_language);
+
+            // Pull the latest control.state from the main board so that the
+            // remote UI starts in sync with whatever expression is currently
+            // displayed on the main board.
+            sync_main_board_state_();
+
+            ESP_LOGI(TAG, "Main-board config applied: anim='%s' expr_count=%u expr_names=%u",
+                     active_config_.controller.visual.animation_name.c_str(),
+                     static_cast<unsigned>(active_config_.controller.visual.expression_count),
+                     static_cast<unsigned>(active_config_.controller.visual.expression_names.size()));
+
             ESP_RETURN_ON_ERROR(status_led_.set_mode(StatusLedMode::Linked), TAG, "LED linked state failed");
             ESP_RETURN_ON_ERROR(
                 display_service_.show_status(
@@ -769,6 +770,12 @@ esp_err_t ControllerApp::resolve_config_()
             active_config_ = candidate;
             seed_config_ = active_config_;
             display_service_.set_language(active_config_.controller.ui_language);
+
+            ESP_LOGI(TAG, "Repo config applied: anim='%s' expr_count=%u expr_names=%u",
+                     active_config_.controller.visual.animation_name.c_str(),
+                     static_cast<unsigned>(active_config_.controller.visual.expression_count),
+                     static_cast<unsigned>(active_config_.controller.visual.expression_names.size()));
+
             ESP_RETURN_ON_ERROR(status_led_.set_mode(StatusLedMode::Linked), TAG, "LED linked state failed");
             ESP_RETURN_ON_ERROR(
                 display_service_.show_status(
@@ -781,23 +788,36 @@ esp_err_t ControllerApp::resolve_config_()
         }
     }
 
-    ESP_LOGW(TAG, "Falling back to filesystem image configuration");
-    ESP_RETURN_ON_ERROR(
-        display_service_.show_error(
-            localized(seed_language, "Config", "配置"),
-            localized(seed_language, "Remote source missing", "远程配置缺失"),
-            localized(seed_language, "Filesystem fallback", "回退到文件系统配置")),
-        TAG,
-        "Display fallback state failed");
+    ESP_LOGW(TAG, "Remote config sources unavailable; starting provisioning portal");
+
+    // On first boot the remote MUST pair with a main board over BLE before
+    // the expression UI can show meaningful names.  The filesystem image
+    // only carries pairing/network seed data — visual / expression config
+    // always comes from the main board.
+    //
+    // Start the provisioning portal as a convenience, then return so the
+    // runtime loop starts.  The user can open the Link page (摇杆→Link→B1)
+    // to scan for and pair with a main board at any time.
     ESP_RETURN_ON_ERROR(network_manager_.start_user_provisioning_portal(seed_config_.controller), TAG, "Provisioning portal start failed");
     ESP_RETURN_ON_ERROR(status_led_.set_mode(StatusLedMode::Provisioning), TAG, "LED provisioning state failed");
     ESP_RETURN_ON_ERROR(
         display_service_.show_provisioning(
             seed_config_.controller.network.provisioning_ap_prefix.empty() ? "PROTO-REMOTE" : seed_config_.controller.network.provisioning_ap_prefix.c_str(),
-            localized(seed_language, "Join AP and load portal", "连接热点并打开门户"),
+            localized(seed_language, "Pair w/ main board", "请配对主板"),
             100),
         TAG,
         "Display provisioning state failed");
+
+    // Clear any stale visual data from the seed config so the UI shows
+    // generic placeholders until a real main-board manifest is received.
+    // Keep expression_count at a reasonable default so the full range of
+    // expression indices is selectable.
+    active_config_.controller.visual.expression_names.clear();
+    active_config_.controller.visual.animation_name.clear();
+    if (active_config_.controller.visual.expression_count == 0)
+    {
+        active_config_.controller.visual.expression_count = 17;
+    }
     return ESP_OK;
 }
 
@@ -815,8 +835,22 @@ esp_err_t ControllerApp::refresh_active_config_()
         return err;
     }
 
+    // Re-sync all expression-related runtime state from the freshly-resolved
+    // active config so the UI immediately reflects the received configuration.
+    expression_count_ = std::max<uint8_t>(1, active_config_.controller.visual.expression_count);
+    if (expression_index_ >= expression_count_)
+    {
+        expression_index_ = static_cast<uint8_t>(expression_count_ - 1);
+    }
     apply_display_settings_();
     shake_random_enabled_ = active_config_.controller.features.enable_shake_random;
+
+    ESP_LOGI(TAG, "Config refreshed: source=%s anim='%s' expr_count=%u expr_names=%u",
+             config_source_name(active_config_.source),
+             active_config_.controller.visual.animation_name.c_str(),
+             static_cast<unsigned>(expression_count_),
+             static_cast<unsigned>(active_config_.controller.visual.expression_names.size()));
+
     return config_storage_.persist_active_config(active_config_);
 }
 
@@ -1003,6 +1037,12 @@ esp_err_t ControllerApp::discover_main_board_()
     {
         expression_index_ = static_cast<uint8_t>(expression_count_ - 1);
     }
+
+    ESP_LOGI(TAG, "Main-board discovered: anim='%s' expr_count=%u expr_names=%u",
+             active_config_.controller.visual.animation_name.c_str(),
+             static_cast<unsigned>(expression_count_),
+             static_cast<unsigned>(active_config_.controller.visual.expression_names.size()));
+
     apply_display_settings_();
     display_service_.set_language(active_config_.controller.ui_language);
     ESP_RETURN_ON_ERROR(status_led_.set_mode(StatusLedMode::Linked), TAG, "LED linked state failed");
@@ -1418,6 +1458,38 @@ void ControllerApp::update_signal_strength_()
     uint8_t signal_percent = 0;
     const bool visible = pairing_service_.get_signal_strength(&signal_percent);
     display_service_.set_signal_strength(signal_percent, visible);
+}
+
+void ControllerApp::sync_main_board_state_()
+{
+    MainBoardState mb_state = {};
+    if (!pairing_service_.get_main_board_state(&mb_state) || !mb_state.valid)
+    {
+        return;
+    }
+
+    // Synchronise local expression index with the main board.
+    // The main board is authoritative — if it reports a different expression,
+    // adopt it so that the remote UI matches what is actually displayed.
+    const uint8_t count = std::max<uint8_t>(1, expression_count_);
+    if (mb_state.expression < count && mb_state.expression != expression_index_)
+    {
+        ESP_LOGI(TAG, "Main-board expression sync: %u → %u",
+                 static_cast<unsigned>(expression_index_),
+                 static_cast<unsigned>(mb_state.expression));
+        expression_index_ = mb_state.expression;
+    }
+
+    // Optionally sync brightness if the main board reports it.
+    if (mb_state.brightness != brightness_level_)
+    {
+        brightness_level_ = mb_state.brightness;
+    }
+
+    if (mb_state.voice_enabled != voice_enabled_)
+    {
+        voice_enabled_ = mb_state.voice_enabled;
+    }
 }
 
 bool ControllerApp::handle_input_event_(const InputEvent &event)
@@ -1982,6 +2054,7 @@ esp_err_t ControllerApp::run_runtime_loop_()
     last_motion_action_ms_ = 0;
     last_gesture_action_ms_ = 0;
     last_shake_peak_ms_ = 0;
+    last_state_sync_ms_ = 0;
     last_shake_direction_ = 0;
     last_gesture_proximity_close_ = false;
     display_sleeping_ = false;
@@ -2076,6 +2149,15 @@ esp_err_t ControllerApp::run_runtime_loop_()
         {
             changed = refresh_battery_and_charger_(nullptr, nullptr) || changed;
             last_battery_poll_ms_ = now;
+        }
+
+        // Periodically pull the main board's control.state so that the
+        // remote expression index stays in sync even when the main board
+        // is controlled externally (e.g. via the web app or BLE).
+        if ((now - last_state_sync_ms_) >= 1000)
+        {
+            sync_main_board_state_();
+            last_state_sync_ms_ = now;
         }
 
         if (sleep_display_if_idle_(now))

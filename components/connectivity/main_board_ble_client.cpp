@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "cJSON.h"
 #include "config_manifest.hpp"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -47,7 +48,7 @@ constexpr TickType_t kWriteChunkTimeout = pdMS_TO_TICKS(1500);
 constexpr int kScanDurationMs = 8000;
 constexpr int kConnectTimeoutMs = 10000;
 constexpr size_t kMaxConfigPayloadBytes = 6144;
-constexpr size_t kBleWriteChunkBytes = 20;
+constexpr size_t kBleWriteChunkBytes = 160;
 
 #if CONFIG_BT_NIMBLE_ENABLED
 struct MainBoardBleClient
@@ -84,6 +85,12 @@ struct MainBoardBleClient
     std::vector<BlePeerCandidate> scan_candidates;
     std::string last_error;
     int write_status = 0;
+
+    // --- Notification callback & state sync ---
+    MainBoardNotificationCallback notify_callback = nullptr;
+    void *notify_user_data = nullptr;
+    MainBoardState synced_state = {};
+    std::string notify_rx_buffer;   // accumulator for chunked JSON notifications
 };
 
 MainBoardBleClient s_client;
@@ -274,6 +281,8 @@ void clear_operation_state()
     s_client.config_request_in_flight = false;
     s_client.config_payload.clear();
     s_client.last_error.clear();
+    s_client.notify_rx_buffer.clear();
+    s_client.synced_state = {};
     xEventGroupClearBits(s_client.events, kEventReady | kEventFailed | kEventConfigPayload | kEventWriteComplete | kEventWriteFailed | kEventScanComplete);
 }
 
@@ -475,8 +484,10 @@ void append_config_payload_chunk(const uint8_t *data, const size_t length)
 
 std::string build_config_request(const prototracer::ControllerConfig &seed)
 {
-    const std::string endpoint = seed.pairing.config_endpoint.empty() ? std::string("/api/remote/config") : seed.pairing.config_endpoint;
-    return std::string("{\"op\":\"config.get\",\"endpoint\":\"") + endpoint + "\",\"device_id\":\"" + seed.device_id + "\"}\n";
+    (void)seed;
+    // Match the web-app protocol: send a bare config.get so the main board
+    // recognises the op and responds with its full manifest JSON.
+    return std::string("{\"op\":\"config.get\"}\n");
 }
 
 int on_rx_chunk_written(uint16_t conn_handle, const struct ble_gatt_error *error, struct ble_gatt_attr *attr, void *arg)
@@ -761,6 +772,223 @@ int on_service_discovery(uint16_t conn_handle, const struct ble_gatt_error *erro
     return 0;
 }
 
+// --- Notification helpers: process control.state and generic JSON from main board ---
+
+void apply_control_state_json(cJSON *root)
+{
+    if (root == nullptr)
+    {
+        return;
+    }
+
+    MainBoardState &state = s_client.synced_state;
+    cJSON *expr = cJSON_GetObjectItemCaseSensitive(root, "expression");
+    if (cJSON_IsNumber(expr))
+    {
+        state.expression = static_cast<uint8_t>(expr->valueint);
+        state.valid = true;
+    }
+
+    cJSON *bright = cJSON_GetObjectItemCaseSensitive(root, "brightness");
+    if (cJSON_IsNumber(bright))
+    {
+        state.brightness = static_cast<uint8_t>(bright->valueint);
+    }
+
+    cJSON *voice = cJSON_GetObjectItemCaseSensitive(root, "voice_enabled");
+    if (cJSON_IsBool(voice))
+    {
+        state.voice_enabled = cJSON_IsTrue(voice);
+    }
+
+    cJSON *dmode = cJSON_GetObjectItemCaseSensitive(root, "display_mode");
+    if (cJSON_IsNumber(dmode))
+    {
+        state.display_mode = static_cast<uint8_t>(dmode->valueint);
+    }
+
+    cJSON *hue = cJSON_GetObjectItemCaseSensitive(root, "hue_shift");
+    if (cJSON_IsNumber(hue))
+    {
+        state.hue_shift = static_cast<uint16_t>(hue->valueint);
+    }
+
+    state.last_update_ms = static_cast<uint32_t>(esp_log_timestamp());
+    ESP_LOGI(TAG, "Main-board state synced: expr=%u bright=%u voice=%d dmode=%u hue=%u",
+             static_cast<unsigned>(state.expression),
+             static_cast<unsigned>(state.brightness),
+             state.voice_enabled ? 1 : 0,
+             static_cast<unsigned>(state.display_mode),
+             static_cast<unsigned>(state.hue_shift));
+}
+
+void process_notification_json(const char *json, const size_t length)
+{
+    if (json == nullptr || length == 0)
+    {
+        return;
+    }
+
+    // Quick pre-scan: does this look like a manifest (visual / device / pairing at top level)?
+    // Manifest responses from ESPMenu.h do NOT carry an "op" field, so we detect them
+    // by their top-level keys.  Feed them to the config-payload accumulator regardless of
+    // whether a config request is still marked in-flight — this makes the receive path
+    // robust against the main board sending the manifest before or after the flag window.
+    const bool looks_like_manifest =
+        (std::strstr(json, "\"visual\"") != nullptr) ||
+        (std::strstr(json, "\"device\"") != nullptr) ||
+        (std::strstr(json, "\"pairing\"") != nullptr);
+
+    if (s_client.config_request_in_flight || looks_like_manifest)
+    {
+        // If a config request is still in flight the accumulator will extract the
+        // JSON and signal kEventConfigPayload.  When looks_like_manifest is true
+        // the accumulator may also finalise a late-arriving manifest.
+        append_config_payload_chunk(reinterpret_cast<const uint8_t *>(json), length);
+    }
+
+    // Parse JSON to determine message type.
+    cJSON *root = cJSON_ParseWithLength(json, length);
+    if (root == nullptr)
+    {
+        ESP_LOGW(TAG, "Main-board notification is not valid JSON");
+        return;
+    }
+
+    cJSON *op = cJSON_GetObjectItemCaseSensitive(root, "op");
+    if (cJSON_IsString(op) && op->valuestring != nullptr)
+    {
+        const std::string op_str(op->valuestring);
+        if (op_str == "control.state")
+        {
+            apply_control_state_json(root);
+        }
+        else if (op_str == "pong")
+        {
+            ESP_LOGI(TAG, "Main-board pong received");
+        }
+    }
+    else if (looks_like_manifest)
+    {
+        // Manifest received — extract expression names / count for diagnostics.
+        cJSON *visual = cJSON_GetObjectItemCaseSensitive(root, "visual");
+        if (cJSON_IsObject(visual))
+        {
+            cJSON *count = cJSON_GetObjectItemCaseSensitive(visual, "expression_count");
+            cJSON *names = cJSON_GetObjectItemCaseSensitive(visual, "expression_names");
+            cJSON *anim_name = cJSON_GetObjectItemCaseSensitive(visual, "animation_name");
+            ESP_LOGI(TAG,
+                     "Main-board manifest received: expr_count=%d expr_names=%s anim='%s'",
+                     cJSON_IsNumber(count) ? count->valueint : -1,
+                     cJSON_IsArray(names) ? "yes" : "no",
+                     cJSON_IsString(anim_name) ? anim_name->valuestring : "?");
+        }
+    }
+
+    // Invoke the application-layer notification callback.
+    if (s_client.notify_callback != nullptr)
+    {
+        s_client.notify_callback(json, length, s_client.notify_user_data);
+    }
+
+    cJSON_Delete(root);
+}
+
+void append_notification_chunk(const uint8_t *data, const size_t length)
+{
+    if (data == nullptr || length == 0)
+    {
+        return;
+    }
+
+    // Prevent unbounded growth on a noisy link.
+    constexpr size_t kMaxNotifyRxBufferBytes = 8192;
+    if ((s_client.notify_rx_buffer.size() + length) > kMaxNotifyRxBufferBytes)
+    {
+        ESP_LOGW(TAG, "Notification RX buffer overflow; discarding oldest data");
+        s_client.notify_rx_buffer.clear();
+    }
+
+    s_client.notify_rx_buffer.append(reinterpret_cast<const char *>(data), length);
+
+    // Extract complete JSON objects from the buffer; the main board may chunk
+    // large notifications across multiple BLE packets.
+    while (true)
+    {
+        const size_t start = s_client.notify_rx_buffer.find('{');
+        if (start == std::string::npos)
+        {
+            // No JSON start marker — if the buffer contains only whitespace / control
+            // characters, clear it so we don't leak memory.  Otherwise keep waiting
+            // for a '{' to arrive in a subsequent chunk.
+            if (s_client.notify_rx_buffer.find_first_not_of(" \t\r\n") == std::string::npos)
+            {
+                s_client.notify_rx_buffer.clear();
+            }
+            break;
+        }
+
+        // Discard any leading non-JSON bytes (e.g. trailing newline from a previous
+        // complete object).
+        if (start > 0)
+        {
+            s_client.notify_rx_buffer.erase(0, start);
+        }
+
+        // Find matching closing brace.
+        bool in_string = false;
+        bool escaped = false;
+        int depth = 0;
+        size_t end = std::string::npos;
+        for (size_t index = 0; index < s_client.notify_rx_buffer.size(); ++index)
+        {
+            const char ch = s_client.notify_rx_buffer[index];
+            if (escaped)
+            {
+                escaped = false;
+                continue;
+            }
+            if (ch == '\\')
+            {
+                escaped = in_string;
+                continue;
+            }
+            if (ch == '"')
+            {
+                in_string = !in_string;
+                continue;
+            }
+            if (in_string)
+            {
+                continue;
+            }
+            if (ch == '{')
+            {
+                ++depth;
+            }
+            else if (ch == '}')
+            {
+                --depth;
+                if (depth == 0)
+                {
+                    end = index + 1;
+                    break;
+                }
+            }
+        }
+
+        if (end == std::string::npos)
+        {
+            // Incomplete JSON — wait for more data.
+            break;
+        }
+
+        const std::string json = s_client.notify_rx_buffer.substr(0, end);
+        s_client.notify_rx_buffer.erase(0, end);
+        process_notification_json(json.c_str(), json.size());
+    }
+}
+
 int gap_event(struct ble_gap_event *event, void *arg)
 {
     (void)arg;
@@ -867,10 +1095,10 @@ int gap_event(struct ble_gap_event *event, void *arg)
                 std::string payload(payload_len, '\0');
                 if (ble_hs_mbuf_to_flat(event->notify_rx.om, payload.data(), payload_len, nullptr) == 0)
                 {
-                    if (s_client.config_request_in_flight)
-                    {
-                        append_config_payload_chunk(reinterpret_cast<const uint8_t *>(payload.data()), payload.size());
-                    }
+                    // Route every notification through the unified chunk assembler.
+                    // This feeds both config-request payloads AND unsolicited
+                    // control.state / pong messages.
+                    append_notification_chunk(reinterpret_cast<const uint8_t *>(payload.data()), payload.size());
                     ESP_LOGI(
                         TAG,
                         "Main-board notification received on handle %u (%s, %u bytes)",
@@ -1222,4 +1450,33 @@ bool get_main_board_ble_signal_strength(uint8_t *out_percent)
     return true;
 #endif
 }
+
+void set_main_board_ble_notification_callback(MainBoardNotificationCallback callback, void *user_data)
+{
+#if CONFIG_BT_NIMBLE_ENABLED
+    s_client.notify_callback = callback;
+    s_client.notify_user_data = user_data;
+    ESP_LOGI(TAG, "Main-board BLE notification callback %s", callback != nullptr ? "registered" : "cleared");
+#else
+    (void)callback;
+    (void)user_data;
+#endif
+}
+
+bool get_main_board_ble_state(MainBoardState *out)
+{
+    if (out == nullptr)
+    {
+        return false;
+    }
+
+#if !CONFIG_BT_NIMBLE_ENABLED
+    *out = {};
+    return false;
+#else
+    *out = s_client.synced_state;
+    return out->valid;
+#endif
+}
+
 } // namespace prototracer

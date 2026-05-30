@@ -33,6 +33,7 @@ public:
     esp_err_t send_control_command(const char *payload);
     bool get_last_main_board_binding(std::string *out) const;
     bool get_signal_strength(uint8_t *out_percent) const;
+    bool get_main_board_state(MainBoardState *out) const;
 
 private:
     bool initialized_ = false;

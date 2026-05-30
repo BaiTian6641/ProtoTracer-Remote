@@ -99,6 +99,19 @@ struct DisplayConfig
     uint16_t oled_timeout_seconds = 30;
 };
 
+struct MainBoardState
+{
+    bool valid = false;
+    uint8_t expression = 0;
+    uint8_t expression_count = 17;
+    uint8_t brightness = 105;
+    bool voice_enabled = true;
+    uint8_t display_mode = 1;
+    uint16_t hue_shift = 0;
+    std::string last_error;
+    uint32_t last_update_ms = 0;
+};
+
 struct ControllerConfig
 {
     std::string device_id;

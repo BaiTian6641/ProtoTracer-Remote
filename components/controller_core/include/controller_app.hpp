@@ -55,6 +55,7 @@ private:
     void apply_display_settings_();
     void update_signal_strength_();
     void select_relative_page_(int delta);
+    void sync_main_board_state_();
 
     ConfigStorage config_storage_;
     NetworkManager network_manager_;
@@ -104,6 +105,7 @@ private:
     uint32_t last_motion_action_ms_ = 0;
     uint32_t last_gesture_action_ms_ = 0;
     uint32_t last_shake_peak_ms_ = 0;
+    uint32_t last_state_sync_ms_ = 0;
     int8_t last_shake_direction_ = 0;
     bool last_gesture_proximity_close_ = false;
 };
