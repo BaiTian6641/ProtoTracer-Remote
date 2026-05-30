@@ -1,6 +1,8 @@
 #include "config_manifest.hpp"
 
+#include <algorithm>
 #include <cstdio>
+#include <cstring>
 
 #include "cJSON.h"
 #include "esp_log.h"
@@ -121,6 +123,7 @@ void parse_expression_names(cJSON *visual, prototracer::VisualConfig *out)
     }
     if (!cJSON_IsArray(names))
     {
+        ESP_LOGW(TAG, "Manifest visual section has no 'expression_names' or 'expressions' array");
         return;
     }
 
@@ -148,6 +151,8 @@ void parse_expression_names(cJSON *visual, prototracer::VisualConfig *out)
         }
         ++index;
     }
+
+    ESP_LOGI(TAG, "Parsed %u expression name(s) from manifest", static_cast<unsigned>(out->expression_names.size()));
 }
 } // namespace
 
@@ -219,8 +224,33 @@ esp_err_t parse_manifest_json(const char *json, const ConfigSourceKind source, R
     cJSON *root = cJSON_Parse(json);
     if (root == nullptr)
     {
-        ESP_LOGE(TAG, "Failed to parse manifest JSON");
+        ESP_LOGE(TAG, "Failed to parse manifest JSON (first 120 chars: '%.*s')",
+                 static_cast<int>(std::min<size_t>(120, std::strlen(json))), json);
         return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    // Dump the top-level keys so we can see what the main board actually sent.
+    {
+        cJSON *child = root->child;
+        while (child != nullptr)
+        {
+            if (cJSON_IsString(child))
+            {
+                ESP_LOGI(TAG, "Manifest top-level key '%s' = '%.*s'",
+                         child->string,
+                         static_cast<int>(std::min<size_t>(80, std::strlen(child->valuestring))),
+                         child->valuestring);
+            }
+            else if (cJSON_IsNumber(child))
+            {
+                ESP_LOGI(TAG, "Manifest top-level key '%s' = %d", child->string, child->valueint);
+            }
+            else
+            {
+                ESP_LOGI(TAG, "Manifest top-level key '%s' (%s)", child->string, cJSON_IsObject(child) ? "object" : cJSON_IsArray(child) ? "array" : "other");
+            }
+            child = child->next;
+        }
     }
 
     cJSON *device = cJSON_GetObjectItemCaseSensitive(root, "device");

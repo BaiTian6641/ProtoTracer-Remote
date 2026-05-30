@@ -43,7 +43,7 @@ constexpr EventBits_t kEventWriteFailed = BIT5;
 constexpr EventBits_t kEventScanComplete = BIT6;
 constexpr TickType_t kSyncTimeout = pdMS_TO_TICKS(5000);
 constexpr TickType_t kOperationTimeout = pdMS_TO_TICKS(12000);
-constexpr TickType_t kConfigTimeout = pdMS_TO_TICKS(2500);
+constexpr TickType_t kConfigTimeout = pdMS_TO_TICKS(15000);
 constexpr TickType_t kWriteChunkTimeout = pdMS_TO_TICKS(1500);
 constexpr int kScanDurationMs = 8000;
 constexpr int kConnectTimeoutMs = 10000;
@@ -911,6 +911,13 @@ void append_notification_chunk(const uint8_t *data, const size_t length)
 
     s_client.notify_rx_buffer.append(reinterpret_cast<const char *>(data), length);
 
+    // Log accumulation progress when a config request is in flight so we
+    // can see how many bytes have been received vs. what's still missing.
+    if (s_client.config_request_in_flight && (s_client.notify_rx_buffer.size() % 100) < length)
+    {
+        ESP_LOGI(TAG, "Config payload accumulating: %u bytes so far", static_cast<unsigned>(s_client.notify_rx_buffer.size()));
+    }
+
     // Extract complete JSON objects from the buffer; the main board may chunk
     // large notifications across multiple BLE packets.
     while (true)
@@ -1064,6 +1071,22 @@ int gap_event(struct ble_gap_event *event, void *arg)
 
         s_client.conn_handle = event->connect.conn_handle;
         ESP_LOGI(TAG, "Connected to main board over BLE");
+
+        // Request a larger ATT MTU so that the main board can send its
+        // manifest in fewer, larger chunks (instead of 20-byte fragments
+        // that take many connection events to complete).
+        {
+            const int mtu_rc = ble_gattc_exchange_mtu(s_client.conn_handle, nullptr, nullptr);
+            if (mtu_rc == 0)
+            {
+                ESP_LOGI(TAG, "Requested MTU exchange with main board");
+            }
+            else
+            {
+                ESP_LOGW(TAG, "Could not request MTU exchange (rc=%d); using default 23-byte MTU", mtu_rc);
+            }
+        }
+
         {
             const int rc = ble_gattc_disc_svc_by_uuid(s_client.conn_handle, &s_client.service_uuid.u, on_service_discovery, nullptr);
             if (rc != 0)

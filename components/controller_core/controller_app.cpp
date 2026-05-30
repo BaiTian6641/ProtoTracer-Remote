@@ -391,10 +391,9 @@ void preserve_dynamic_seed_values(prototracer::ResolvedConfig *candidate, const 
     {
         candidate->controller.pairing.bound_peer_id = current.controller.pairing.bound_peer_id;
     }
-    if (candidate->controller.visual.expression_names.empty())
-    {
-        candidate->controller.visual.expression_names = current.controller.visual.expression_names;
-    }
+    // Expression names MUST come from the main board (or remote repo).
+    // Never copy them from a stale seed/filesystem config — that would
+    // silently reinstate hardcoded built-in names.
     if (candidate->controller.visual.animation_name.empty())
     {
         candidate->controller.visual.animation_name = current.controller.visual.animation_name;

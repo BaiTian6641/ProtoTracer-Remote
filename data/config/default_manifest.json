@@ -28,25 +28,6 @@
   "visual": {
     "animation_asset": "status/default.anim.json",
     "expression_count": 17,
-    "expression_names": [
-      "Default",
-      "Angry",
-      "Doubt",
-      "Frown",
-      "Heart",
-      "Sad",
-      "Surprise",
-      "Happy",
-      "OwO",
-      "Surprise",
-      "Sleepy",
-      "Curious",
-      "Excited",
-      "Wink",
-      "Shy",
-      "Focus",
-      "Custom"
-    ],
     "red": 25,
     "green": 125,
     "blue": 235
